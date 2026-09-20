@@ -40,16 +40,19 @@
   let peakDecay = 0;
   let dpr = 1;
 
-  // Beat detection state
+  // Beat detection state (phone-mic friendly: onset vs recent avg)
   let bassHistory = [];
-  let bassAvg = 0.08;
-  let subHistory = [];
-  let subAvg = 0.06;
+  let bassAvg = 0.04;
+  let kickHistory = [];
+  let kickAvg = 0.04;
+  let prevKick = 0;
   let lastBeat = 0;
   let last808 = 0;
   let beatInterval = 500; // ms, adapts toward detected tempo
   let pulseFlash = 0; // 0..1 screen bloom residual
   let boomFlash = 0; // heavy 808 residual
+  let ambientGlow = 0; // continuous energy-driven bloom
+  let statusTick = 0;
   const pulses = []; // { t0, strength, hueMix }
   const booms = []; // { t0, strength } — fat 808 kicks
 
@@ -84,45 +87,49 @@
   }
 
   function spawn808(strength, now) {
-    const s = Math.min(1, strength);
-    booms.push({ t0: now, strength: s });
+    const s = Math.min(1.2, Math.max(0.55, strength));
+    booms.push({ t0: now, strength: Math.min(1, s) });
     while (booms.length > MAX_BOOMS) booms.shift();
-    boomFlash = Math.min(1, boomFlash + 0.7 + s * 0.5);
-    // Also kick a lighter ring so waves stay in sync
-    spawnPulse(0.45 + s * 0.4, now);
+    boomFlash = Math.min(1, boomFlash + 0.85 + s * 0.55);
+    // Ring rides with the boom
+    spawnPulse(0.55 + s * 0.4, now);
     els.display.classList.add("flash-808");
-    window.setTimeout(() => els.display.classList.remove("flash-808"), 220);
+    window.setTimeout(() => els.display.classList.remove("flash-808"), 260);
   }
 
-  function detect808(sub, bass, energy, sens, now) {
-    subHistory.push(sub);
-    if (subHistory.length > 40) subHistory.shift();
+  // Phone mics hear kick body ~60–200 Hz, not true 20 Hz sub.
+  // 808 boom = strong kick/bass *onset* vs recent average.
+  function detect808(kick, bass, energy, sens, now) {
+    kickHistory.push(kick);
+    if (kickHistory.length > 36) kickHistory.shift();
 
     let sum = 0;
-    for (let i = 0; i < subHistory.length; i++) sum += subHistory[i];
-    const mean = sum / Math.max(1, subHistory.length);
-    subAvg = subAvg * 0.9 + mean * 0.1;
+    for (let i = 0; i < kickHistory.length; i++) sum += kickHistory[i];
+    const mean = sum / Math.max(1, kickHistory.length);
+    kickAvg = kickAvg * 0.88 + mean * 0.12;
 
-    // 808: deep sub onset, heavier than general bass tick
-    const thr = Math.max(0.1, subAvg * (1.55 - sens * 0.1) + 0.035);
-    const minGap = Math.max(220, Math.min(520, beatInterval * 0.7));
-    const isThump =
-      sub > thr &&
-      sub > 0.16 &&
-      sub >= bass * 0.72 && // sub carries the hit
-      sub > energy * 0.85;
+    const rise = kick - prevKick;
+    prevKick = kick;
 
-    if (isThump && now - last808 > minGap) {
+    // Low absolute floor; mainly onset vs local average (sens lowers multiplier)
+    const thr = Math.max(0.025, kickAvg * (1.22 - sens * 0.1) + 0.012);
+    const minGap = Math.max(180, Math.min(480, beatInterval * 0.62));
+    const clearKick =
+      kick > thr &&
+      kick > 0.035 &&
+      (kick > kickAvg * 1.18 || rise > 0.02) &&
+      kick >= energy * 0.55;
+
+    if (clearKick && now - last808 > minGap) {
       const gap = now - last808;
-      if (last808 > 0 && gap > 280 && gap < 1600) {
+      if (last808 > 0 && gap > 260 && gap < 1600) {
         beatInterval = beatInterval * 0.65 + gap * 0.35;
       }
       last808 = now;
-      lastBeat = now; // suppress double general-beat flash
-      const strength = Math.min(
-        1.15,
-        ((sub - thr) / Math.max(0.06, thr)) * 0.5 + sub * 1.15
-      ) * Math.min(1.25, sens * 0.9);
+      lastBeat = now;
+      const strength =
+        Math.min(1.25, ((kick - thr) / Math.max(0.04, thr)) * 0.55 + kick * 1.35 + rise * 2) *
+        Math.min(1.35, sens * 0.95);
       spawn808(strength, now);
       return true;
     }
@@ -135,37 +142,58 @@
 
     let sum = 0;
     for (let i = 0; i < bassHistory.length; i++) sum += bassHistory[i];
-    const mean = sum / bassHistory.length;
-    bassAvg = bassAvg * 0.92 + mean * 0.08;
+    const mean = sum / Math.max(1, bassHistory.length);
+    bassAvg = bassAvg * 0.9 + mean * 0.1;
 
-    // Adaptive threshold: onset above recent average
-    const threshold = Math.max(0.12, bassAvg * (1.45 - sens * 0.12) + 0.04);
-    const minGap = Math.max(160, Math.min(420, beatInterval * 0.55));
-    const onset = bass > threshold && bass > energy * 0.95 && bass > 0.14;
+    const threshold = Math.max(0.03, bassAvg * (1.28 - sens * 0.12) + 0.01);
+    const minGap = Math.max(140, Math.min(400, beatInterval * 0.5));
+    const onset = bass > threshold && bass > 0.03 && (bass > energy * 0.5 || bass > bassAvg * 1.15);
 
     if (onset && now - lastBeat > minGap) {
       const gap = now - lastBeat;
-      if (lastBeat > 0 && gap > 250 && gap < 1400) {
+      if (lastBeat > 0 && gap > 240 && gap < 1400) {
         beatInterval = beatInterval * 0.7 + gap * 0.3;
       }
       lastBeat = now;
-      const strength = Math.min(1, (bass - threshold) / Math.max(0.08, threshold) * 0.55 + bass);
-      spawnPulse(strength * Math.min(1.3, sens * 0.85), now);
+      const strength = Math.min(1, (bass - threshold) / Math.max(0.04, threshold) * 0.6 + bass);
+      // Stronger phone-mic hits still get the heavy boom
+      if (bass > bassAvg * 1.35 && bass > 0.06) {
+        last808 = now;
+        spawn808(strength * Math.min(1.3, sens * 0.9), now);
+      } else {
+        spawnPulse(strength * Math.min(1.4, sens * 0.95), now);
+      }
       return true;
     }
 
-    // Soft energy peaks for quieter tracks (secondary pulses)
+    // Soft energy peaks (distant speakers / quiet mix)
     if (
-      energy > bassAvg * 1.8 &&
-      energy > 0.28 * sens &&
-      now - lastBeat > Math.max(280, beatInterval * 0.85)
+      energy > Math.max(0.05, bassAvg * 1.35) &&
+      energy > 0.06 &&
+      now - lastBeat > Math.max(240, beatInterval * 0.8)
     ) {
       lastBeat = now;
-      spawnPulse(Math.min(0.7, energy * 1.1), now);
+      spawnPulse(Math.min(0.85, energy * 1.4 * sens * 0.7), now);
       return true;
     }
 
     return false;
+  }
+
+  function drawAmbientEnergy(w, h, energy, kick) {
+    const target = Math.min(1, energy * 1.1 + kick * 0.85);
+    ambientGlow = ambientGlow * 0.82 + target * 0.18;
+    if (ambientGlow < 0.02) return;
+
+    const cx = w * 0.5;
+    const cy = h * 0.5;
+    const r = Math.min(w, h) * (0.22 + ambientGlow * 0.28);
+    const g = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, `rgba(0,229,255,${0.14 * ambientGlow})`);
+    g.addColorStop(0.45, `rgba(255,106,0,${0.1 * ambientGlow})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx2d.fillStyle = g;
+    ctx2d.fillRect(0, 0, w, h);
   }
 
   function draw808Booms(w, h, now) {
@@ -402,7 +430,7 @@
 
     const w = els.canvas.width;
     const h = els.canvas.height;
-    const sens = parseFloat(els.sensitivity.value) || 1.1;
+    const sens = parseFloat(els.sensitivity.value) || 1.7;
     const now = performance.now();
 
     // Soft fade trail
@@ -419,22 +447,30 @@
     const binCount = freqData.length;
     let energy = 0;
     let bass = 0;
-    let sub = 0;
+    let kick = 0;
 
-    // Sub / 808 territory: lowest bins (~20–80 Hz at typical sample rates)
-    const subBins = Math.max(2, Math.min(6, Math.floor(binCount * 0.03)));
-    // Weight lowest bins harder (true 808 sub ~20–80 Hz)
-    let subSum = freqData[0] * 1.6;
-    if (binCount > 1) subSum += freqData[1] * 1.3;
-    for (let j = 2; j < subBins; j++) subSum += freqData[j];
-    const subWeight = 1.6 + (binCount > 1 ? 1.3 : 0) + Math.max(0, subBins - 2);
-    sub = Math.min(1, (subSum / subWeight / 255) * sens * 1.15);
+    // Kick body phones can hear: ~60–200 Hz (skip DC/bin0 noise, cover mid-bass)
+    // At 48kHz / fft 2048, bin ≈ 23 Hz → bins ~3..9
+    const kickLo = Math.max(2, Math.floor(binCount * 0.005));
+    const kickHi = Math.max(kickLo + 4, Math.floor(binCount * 0.045));
+    let kickSum = 0;
+    let kickN = 0;
+    for (let j = kickLo; j <= kickHi && j < binCount; j++) {
+      kickSum += freqData[j];
+      kickN++;
+    }
+    kick = Math.min(1, ((kickSum / Math.max(1, kickN)) / 255) * sens * 1.35);
 
-    // Bass from lowest ~8% of bins (kick-focused, broader than sub)
-    const bassBins = Math.max(4, Math.floor(binCount * 0.08));
+    // Broader low end for general bass (~40–250 Hz-ish)
+    const bassLo = Math.max(1, Math.floor(binCount * 0.002));
+    const bassHi = Math.max(bassLo + 6, Math.floor(binCount * 0.08));
     let bassSum = 0;
-    for (let j = 0; j < bassBins; j++) bassSum += freqData[j];
-    bass = Math.min(1, ((bassSum / bassBins) / 255) * sens);
+    let bassN = 0;
+    for (let j = bassLo; j <= bassHi && j < binCount; j++) {
+      bassSum += freqData[j];
+      bassN++;
+    }
+    bass = Math.min(1, ((bassSum / Math.max(1, bassN)) / 255) * sens * 1.2);
 
     for (let i = 0; i < BAR_COUNT; i++) {
       const t0 = Math.pow(i / BAR_COUNT, 1.55);
@@ -445,19 +481,22 @@
       let sum = 0;
       for (let j = i0; j <= i1; j++) sum += freqData[j];
       let v = (sum / (i1 - i0 + 1)) / 255;
-      const boost = 0.75 + 0.55 * (i / (BAR_COUNT - 1));
-      v = Math.min(1, v * sens * boost);
+      const boost = 0.9 + 0.65 * (i / (BAR_COUNT - 1));
+      v = Math.min(1, v * sens * boost * 1.15);
 
-      smoothed[i] = smoothed[i] * 0.55 + v * 0.45;
+      smoothed[i] = smoothed[i] * 0.48 + v * 0.52;
       energy += smoothed[i];
     }
 
     energy /= BAR_COUNT;
 
-    // 808 sub-thump first; general beat fills non-808 hits
-    if (!detect808(sub, bass, energy, sens, now)) {
+    // Kick/808 boom first; lighter beat fills the rest
+    if (!detect808(kick, bass, energy, sens, now)) {
       detectBeat(bass, energy, sens, now);
     }
+
+    // Always-on energy glow so the screen moves between beats
+    drawAmbientEnergy(w, h, energy, kick);
 
     // Layer 0: heavy 808 boom (behind everything for weight)
     draw808Booms(w, h, now);
@@ -466,12 +505,13 @@
     drawPulses(w, h, now);
 
     // Layer 2: live waveform ribbon through the pulse center
-    drawWaveformRibbon(w, h, energy);
+    drawWaveformRibbon(w, h, Math.max(energy, kick * 0.8));
 
-    // Layer 3: spectrum bars
+    // Layer 3: spectrum bars (punch slightly with live kick)
+    const punch = 1 + kick * 0.35 + ambientGlow * 0.2;
     for (let i = 0; i < BAR_COUNT; i++) {
-      const level = smoothed[i];
-      const barH = Math.max(usable * 0.02, level * usable);
+      const level = Math.min(1, smoothed[i] * punch);
+      const barH = Math.max(usable * 0.025, level * usable);
       const x = padX + i * (barW + gap);
       const y = baseY - barH;
       const t = i / (BAR_COUNT - 1);
@@ -503,11 +543,18 @@
     ctx2d.restore();
 
     // VU / peak
-    const peak = Math.min(1, Math.max(energy * 1.25, bass * 1.05, sub * 1.1));
+    const peak = Math.min(1, Math.max(energy * 1.35, bass * 1.15, kick * 1.25));
     peakHold = Math.max(peak, peakHold - 0.012);
     peakDecay = peakHold;
     els.vuFill.style.width = `${(peak * 100).toFixed(1)}%`;
     els.vuPeak.style.left = `calc(${(peakDecay * 100).toFixed(1)}% - 1px)`;
+
+    // Status: prove mic is open + show level
+    statusTick++;
+    if (statusTick % 8 === 0) {
+      const lvl = Math.round(peak * 100);
+      setStatus(`LIVE · ${lvl}%`, "live");
+    }
 
     rafId = requestAnimationFrame(drawFrame);
   }
@@ -564,9 +611,9 @@
 
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.55;
-      analyser.minDecibels = -90;
-      analyser.maxDecibels = -20;
+      analyser.smoothingTimeConstant = 0.35;
+      analyser.minDecibels = -95;
+      analyser.maxDecibels = -25;
 
       sourceNode = audioCtx.createMediaStreamSource(mediaStream);
       sourceNode.connect(analyser);
@@ -575,15 +622,18 @@
       timeData = new Uint8Array(analyser.fftSize);
       smoothed.fill(0);
       bassHistory = [];
-      bassAvg = 0.08;
-      subHistory = [];
-      subAvg = 0.06;
+      bassAvg = 0.04;
+      kickHistory = [];
+      kickAvg = 0.04;
+      prevKick = 0;
       lastBeat = 0;
       last808 = 0;
       pulses.length = 0;
       booms.length = 0;
       pulseFlash = 0;
       boomFlash = 0;
+      ambientGlow = 0;
+      statusTick = 0;
 
       running = true;
       els.overlay.hidden = true;
@@ -591,7 +641,7 @@
       els.toggleBtn.disabled = false;
       els.toggleBtn.textContent = "Stop";
       els.toggleBtn.classList.add("running");
-      setStatus("Listening", "live");
+      setStatus("LIVE · listening", "live");
 
       resize();
       cancelAnimationFrame(rafId);
@@ -640,6 +690,7 @@
     booms.length = 0;
     pulseFlash = 0;
     boomFlash = 0;
+    ambientGlow = 0;
     els.display.classList.remove("flash", "flash-808");
 
     els.toggleBtn.textContent = "Stop";
@@ -664,7 +715,7 @@
     if (audioCtx.state === "suspended") {
       try {
         await audioCtx.resume();
-        setStatus("Listening", "live");
+        setStatus("LIVE · listening", "live");
       } catch (_) {}
     }
   }
