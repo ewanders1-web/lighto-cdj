@@ -16,7 +16,9 @@ Safari only grants microphone access over **HTTPS** (or `localhost`). Options:
 
 ### A) GitHub Pages (recommended)
 
-If Pages is enabled on this repo, open the HTTPS Pages URL on your iPhone (see repo Settings → Pages, or the URL reported after deploy).
+**Live:** https://ewanders1-web.github.io/lighto-cdj/
+
+Open that HTTPS URL on your iPhone (repo is public so Pages works on the free plan).
 
 1. Open the Pages URL in **Safari**
 2. Tap **Tap to listen**
