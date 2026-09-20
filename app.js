@@ -4,6 +4,8 @@
   const CYAN = [0, 229, 255];
   const ORANGE = [255, 106, 0];
   const BAR_COUNT = 48;
+  const MAX_PULSES = 6;
+  const PULSE_LIFE_MS = 720;
 
   const els = {
     canvas: document.getElementById("viz"),
@@ -27,12 +29,19 @@
   let running = false;
   let rafId = 0;
   let freqData = null;
+  let timeData = null;
   let smoothed = new Float32Array(BAR_COUNT);
   let peakHold = 0;
   let peakDecay = 0;
-  let lastBeat = 0;
-  let energySmooth = 0;
   let dpr = 1;
+
+  // Beat detection state
+  let bassHistory = [];
+  let bassAvg = 0.08;
+  let lastBeat = 0;
+  let beatInterval = 500; // ms, adapts toward detected tempo
+  let pulseFlash = 0; // 0..1 screen bloom residual
+  const pulses = []; // { t0, strength, hueMix }
 
   function setStatus(text, mode) {
     els.status.textContent = text;
@@ -55,6 +64,163 @@
     ];
   }
 
+  function spawnPulse(strength, now) {
+    const hueMix = strength > 0.75 ? 0.85 : strength > 0.55 ? 0.45 : 0.15;
+    pulses.push({ t0: now, strength: Math.min(1, strength), hueMix });
+    while (pulses.length > MAX_PULSES) pulses.shift();
+    pulseFlash = Math.min(1, pulseFlash + 0.55 + strength * 0.45);
+    els.display.classList.add("flash");
+    window.setTimeout(() => els.display.classList.remove("flash"), 110);
+  }
+
+  function detectBeat(bass, energy, sens, now) {
+    bassHistory.push(bass);
+    if (bassHistory.length > 48) bassHistory.shift();
+
+    let sum = 0;
+    for (let i = 0; i < bassHistory.length; i++) sum += bassHistory[i];
+    const mean = sum / bassHistory.length;
+    bassAvg = bassAvg * 0.92 + mean * 0.08;
+
+    // Adaptive threshold: onset above recent average
+    const threshold = Math.max(0.12, bassAvg * (1.45 - sens * 0.12) + 0.04);
+    const minGap = Math.max(160, Math.min(420, beatInterval * 0.55));
+    const onset = bass > threshold && bass > energy * 0.95 && bass > 0.14;
+
+    if (onset && now - lastBeat > minGap) {
+      const gap = now - lastBeat;
+      if (lastBeat > 0 && gap > 250 && gap < 1400) {
+        beatInterval = beatInterval * 0.7 + gap * 0.3;
+      }
+      lastBeat = now;
+      const strength = Math.min(1, (bass - threshold) / Math.max(0.08, threshold) * 0.55 + bass);
+      spawnPulse(strength * Math.min(1.3, sens * 0.85), now);
+      return true;
+    }
+
+    // Soft energy peaks for quieter tracks (secondary pulses)
+    if (
+      energy > bassAvg * 1.8 &&
+      energy > 0.28 * sens &&
+      now - lastBeat > Math.max(280, beatInterval * 0.85)
+    ) {
+      lastBeat = now;
+      spawnPulse(Math.min(0.7, energy * 1.1), now);
+      return true;
+    }
+
+    return false;
+  }
+
+  function drawPulses(w, h, now) {
+    const cx = w * 0.5;
+    const cy = h * 0.48;
+    const maxR = Math.hypot(w, h) * 0.55;
+
+    // Residual center bloom
+    if (pulseFlash > 0.01) {
+      const bloom = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, maxR * 0.55);
+      bloom.addColorStop(0, `rgba(0,229,255,${0.18 * pulseFlash})`);
+      bloom.addColorStop(0.35, `rgba(255,106,0,${0.1 * pulseFlash})`);
+      bloom.addColorStop(1, "rgba(0,0,0,0)");
+      ctx2d.fillStyle = bloom;
+      ctx2d.fillRect(0, 0, w, h);
+      pulseFlash *= 0.88;
+    }
+
+    for (let i = pulses.length - 1; i >= 0; i--) {
+      const p = pulses[i];
+      const age = (now - p.t0) / PULSE_LIFE_MS;
+      if (age >= 1) {
+        pulses.splice(i, 1);
+        continue;
+      }
+
+      // Ease-out expansion
+      const ease = 1 - Math.pow(1 - age, 2.2);
+      const alpha = (1 - age) * (0.55 + p.strength * 0.45);
+      const [r, g, b] = lerpColor(CYAN, ORANGE, p.hueMix);
+      const radius = (0.08 + ease * 0.92) * maxR * (0.75 + p.strength * 0.35);
+      const lineW = Math.max(2 * dpr, (10 - age * 8) * dpr * (0.7 + p.strength));
+
+      // Outer ring
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx2d.strokeStyle = `rgba(${r},${g},${b},${alpha})`;
+      ctx2d.lineWidth = lineW;
+      ctx2d.stroke();
+
+      // Soft glow ring (wider, dimmer)
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx2d.strokeStyle = `rgba(${r},${g},${b},${alpha * 0.35})`;
+      ctx2d.lineWidth = lineW * 3.2;
+      ctx2d.stroke();
+
+      // Inner secondary ring (slightly ahead timing feel)
+      if (age < 0.7) {
+        const r2 = radius * 0.62;
+        ctx2d.beginPath();
+        ctx2d.arc(cx, cy, r2, 0, Math.PI * 2);
+        const [r2c, g2c, b2c] = lerpColor(ORANGE, CYAN, p.hueMix);
+        ctx2d.strokeStyle = `rgba(${r2c},${g2c},${b2c},${alpha * 0.55})`;
+        ctx2d.lineWidth = Math.max(1.5 * dpr, lineW * 0.55);
+        ctx2d.stroke();
+      }
+
+      // Horizontal waveform pulse band (CDJ jog-area vibe)
+      const bandY = cy;
+      const bandH = (18 + p.strength * 28) * dpr * (1 - age * 0.5);
+      const bandGrad = ctx2d.createLinearGradient(0, bandY - bandH, 0, bandY + bandH);
+      bandGrad.addColorStop(0, "rgba(0,0,0,0)");
+      bandGrad.addColorStop(0.45, `rgba(${r},${g},${b},${alpha * 0.22})`);
+      bandGrad.addColorStop(0.5, `rgba(255,255,255,${alpha * 0.35})`);
+      bandGrad.addColorStop(0.55, `rgba(${r},${g},${b},${alpha * 0.22})`);
+      bandGrad.addColorStop(1, "rgba(0,0,0,0)");
+      ctx2d.fillStyle = bandGrad;
+      const spread = ease * w * 0.48 * (0.7 + p.strength * 0.4);
+      ctx2d.fillRect(cx - spread, bandY - bandH, spread * 2, bandH * 2);
+    }
+  }
+
+  function drawWaveformRibbon(w, h, energy) {
+    if (!timeData) return;
+    analyser.getByteTimeDomainData(timeData);
+
+    const midY = h * 0.48;
+    const amp = h * 0.07 * (0.35 + energy * 1.4);
+    const padX = w * 0.06;
+
+    ctx2d.beginPath();
+    const n = timeData.length;
+    const step = Math.max(1, Math.floor(n / 128));
+    for (let i = 0, x = 0; i < n; i += step, x++) {
+      const t = i / (n - 1);
+      const px = padX + t * (w - padX * 2);
+      const v = (timeData[i] - 128) / 128;
+      const py = midY + v * amp;
+      if (x === 0) ctx2d.moveTo(px, py);
+      else ctx2d.lineTo(px, py);
+    }
+    ctx2d.strokeStyle = `rgba(0,229,255,${0.18 + energy * 0.35})`;
+    ctx2d.lineWidth = Math.max(1.2 * dpr, 1.5 * dpr);
+    ctx2d.stroke();
+
+    // Orange ghost offset
+    ctx2d.beginPath();
+    for (let i = 0, x = 0; i < n; i += step, x++) {
+      const t = i / (n - 1);
+      const px = padX + t * (w - padX * 2);
+      const v = (timeData[i] - 128) / 128;
+      const py = midY + v * amp * 0.7 + 3 * dpr;
+      if (x === 0) ctx2d.moveTo(px, py);
+      else ctx2d.lineTo(px, py);
+    }
+    ctx2d.strokeStyle = `rgba(255,106,0,${0.1 + energy * 0.22})`;
+    ctx2d.lineWidth = Math.max(1 * dpr, 1.2 * dpr);
+    ctx2d.stroke();
+  }
+
   function drawIdle() {
     const w = els.canvas.width;
     const h = els.canvas.height;
@@ -67,6 +233,20 @@
     const barW = (w - padX * 2 - gap * (BAR_COUNT - 1)) / BAR_COUNT;
     const baseY = h - padY;
 
+    // Idle center ring hint
+    const cx = w * 0.5;
+    const cy = h * 0.48;
+    ctx2d.beginPath();
+    ctx2d.arc(cx, cy, Math.min(w, h) * 0.12, 0, Math.PI * 2);
+    ctx2d.strokeStyle = "rgba(0,229,255,0.12)";
+    ctx2d.lineWidth = 2 * dpr;
+    ctx2d.stroke();
+    ctx2d.beginPath();
+    ctx2d.arc(cx, cy, Math.min(w, h) * 0.2, 0, Math.PI * 2);
+    ctx2d.strokeStyle = "rgba(255,106,0,0.08)";
+    ctx2d.lineWidth = 1.5 * dpr;
+    ctx2d.stroke();
+
     for (let i = 0; i < BAR_COUNT; i++) {
       const x = padX + i * (barW + gap);
       const idleH = h * 0.03;
@@ -76,7 +256,6 @@
       ctx2d.fillRect(x, baseY - idleH, barW, idleH);
     }
 
-    // Center grid line
     ctx2d.strokeStyle = "rgba(0,229,255,0.08)";
     ctx2d.lineWidth = 1 * dpr;
     ctx2d.beginPath();
@@ -93,9 +272,10 @@
     const w = els.canvas.width;
     const h = els.canvas.height;
     const sens = parseFloat(els.sensitivity.value) || 1.1;
+    const now = performance.now();
 
     // Soft fade trail
-    ctx2d.fillStyle = "rgba(5,6,8,0.35)";
+    ctx2d.fillStyle = "rgba(5,6,8,0.38)";
     ctx2d.fillRect(0, 0, w, h);
 
     const padX = w * 0.04;
@@ -105,10 +285,15 @@
     const baseY = h - padY;
     const usable = h - padY * 2;
 
-    // Map analyser bins (more weight on lows/mids like DJ displays)
     const binCount = freqData.length;
     let energy = 0;
     let bass = 0;
+
+    // Bass from lowest ~8% of bins (kick-focused)
+    const bassBins = Math.max(4, Math.floor(binCount * 0.08));
+    let bassSum = 0;
+    for (let j = 0; j < bassBins; j++) bassSum += freqData[j];
+    bass = Math.min(1, ((bassSum / bassBins) / 255) * sens);
 
     for (let i = 0; i < BAR_COUNT; i++) {
       const t0 = Math.pow(i / BAR_COUNT, 1.55);
@@ -119,28 +304,24 @@
       let sum = 0;
       for (let j = i0; j <= i1; j++) sum += freqData[j];
       let v = (sum / (i1 - i0 + 1)) / 255;
-
-      // Mild perceptual boost for mid/high so spectrum looks lively
       const boost = 0.75 + 0.55 * (i / (BAR_COUNT - 1));
       v = Math.min(1, v * sens * boost);
 
       smoothed[i] = smoothed[i] * 0.55 + v * 0.45;
       energy += smoothed[i];
-      if (i < 6) bass += smoothed[i];
     }
 
     energy /= BAR_COUNT;
-    bass /= 6;
-    energySmooth = energySmooth * 0.7 + energy * 0.3;
 
-    // Beat / energy flash
-    const now = performance.now();
-    if (bass > 0.55 && bass > energySmooth * 1.35 && now - lastBeat > 180) {
-      lastBeat = now;
-      els.display.classList.add("flash");
-      setTimeout(() => els.display.classList.remove("flash"), 90);
-    }
+    detectBeat(bass, energy, sens, now);
 
+    // Layer 1: beat wave pulses (behind bars so spectrum stays readable)
+    drawPulses(w, h, now);
+
+    // Layer 2: live waveform ribbon through the pulse center
+    drawWaveformRibbon(w, h, energy);
+
+    // Layer 3: spectrum bars
     for (let i = 0; i < BAR_COUNT; i++) {
       const level = smoothed[i];
       const barH = Math.max(usable * 0.02, level * usable);
@@ -149,7 +330,6 @@
       const t = i / (BAR_COUNT - 1);
       const [r, g, b] = lerpColor(CYAN, ORANGE, t);
 
-      // Glow body
       const grad = ctx2d.createLinearGradient(x, y, x, baseY);
       grad.addColorStop(0, `rgba(${r},${g},${b},1)`);
       grad.addColorStop(0.45, `rgba(${r},${g},${b},0.85)`);
@@ -157,30 +337,26 @@
       ctx2d.fillStyle = grad;
       ctx2d.fillRect(x, y, barW, barH);
 
-      // Cap
       ctx2d.fillStyle = `rgba(255,255,255,${0.35 + level * 0.45})`;
       ctx2d.fillRect(x, y, barW, Math.max(1.5 * dpr, barH * 0.04));
     }
 
-    // Subtle mirrored reflection
+    // Subtle mirrored reflection of bar region only (avoid full-canvas copy glitches)
     ctx2d.save();
-    ctx2d.globalAlpha = 0.18;
-    ctx2d.scale(1, -1);
-    ctx2d.drawImage(
-      els.canvas,
-      padX,
-      padY,
-      w - padX * 2,
-      usable * 0.35,
-      padX,
-      -baseY - usable * 0.12,
-      w - padX * 2,
-      usable * 0.12
-    );
+    ctx2d.globalAlpha = 0.16;
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const level = smoothed[i];
+      const barH = Math.max(usable * 0.015, level * usable * 0.22);
+      const x = padX + i * (barW + gap);
+      const t = i / (BAR_COUNT - 1);
+      const [r, g, b] = lerpColor(CYAN, ORANGE, t);
+      ctx2d.fillStyle = `rgba(${r},${g},${b},0.7)`;
+      ctx2d.fillRect(x, baseY + 4 * dpr, barW, barH);
+    }
     ctx2d.restore();
 
     // VU / peak
-    const peak = Math.min(1, energy * 1.4);
+    const peak = Math.min(1, Math.max(energy * 1.25, bass * 1.05));
     peakHold = Math.max(peak, peakHold - 0.012);
     peakDecay = peakHold;
     els.vuFill.style.width = `${(peak * 100).toFixed(1)}%`;
@@ -190,7 +366,6 @@
   }
 
   async function buildAudioConstraints() {
-    // Prefer music pickup: disable voice processing when supported
     return {
       audio: {
         echoCancellation: false,
@@ -211,11 +386,9 @@
     try {
       return await navigator.mediaDevices.getUserMedia(preferred);
     } catch (err) {
-      // Fallback if some constraints are rejected
       if (err && (err.name === "OverconstrainedError" || err.name === "ConstraintNotSatisfiedError")) {
         return navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       }
-      // Some Safari versions dislike boolean false on AGC etc.
       try {
         return await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -243,8 +416,8 @@
       }
 
       analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 1024;
-      analyser.smoothingTimeConstant = 0.72;
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.55;
       analyser.minDecibels = -90;
       analyser.maxDecibels = -20;
 
@@ -252,7 +425,13 @@
       sourceNode.connect(analyser);
 
       freqData = new Uint8Array(analyser.frequencyBinCount);
+      timeData = new Uint8Array(analyser.fftSize);
       smoothed.fill(0);
+      bassHistory = [];
+      bassAvg = 0.08;
+      lastBeat = 0;
+      pulses.length = 0;
+      pulseFlash = 0;
 
       running = true;
       els.overlay.hidden = true;
@@ -304,6 +483,9 @@
     }
     analyser = null;
     freqData = null;
+    timeData = null;
+    pulses.length = 0;
+    pulseFlash = 0;
 
     els.toggleBtn.textContent = "Stop";
     els.toggleBtn.classList.remove("running");
@@ -356,7 +538,6 @@
     }, 120);
   });
 
-  // Boot
   resize();
   drawIdle();
 })();
