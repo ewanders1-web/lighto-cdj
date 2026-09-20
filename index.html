@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#000000" />
+  <title>Lighto</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="chassis" id="app">
+    <header class="top-bar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <h1>Lighto</h1>
+        <span class="sub">CDJ SPECTRUM</span>
+      </div>
+      <div class="status" id="status" aria-live="polite">Ready</div>
+    </header>
+
+    <main class="display" id="display">
+      <canvas id="viz" aria-label="Spectrum visualizer"></canvas>
+      <div class="overlay" id="overlay">
+        <button type="button" class="tap-btn" id="startBtn">Tap to listen</button>
+        <p class="hint">Uses your mic · Safari needs a tap + permission</p>
+      </div>
+      <div class="denied" id="denied" hidden>
+        <p>Microphone access denied.</p>
+        <p class="hint">Enable mic for this site in Safari Settings, then reload.</p>
+      </div>
+    </main>
+
+    <footer class="controls">
+      <div class="control-row">
+        <button type="button" class="ctrl-btn" id="toggleBtn" disabled>Stop</button>
+        <label class="sens">
+          <span>Sens</span>
+          <input type="range" id="sensitivity" min="0.4" max="2.5" step="0.05" value="1.1" />
+        </label>
+      </div>
+      <div class="vu-wrap" aria-hidden="true">
+        <div class="vu-label">PEAK</div>
+        <div class="vu-meter">
+          <div class="vu-fill" id="vuFill"></div>
+          <div class="vu-peak" id="vuPeak"></div>
+        </div>
+      </div>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
