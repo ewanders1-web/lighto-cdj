@@ -1,6 +1,6 @@
 # Lighto
 
-Pioneer CDJ–style spectrum light visualizer for iPhone Safari. Uses the device microphone, analyzes live audio, and draws cyan/orange frequency bars plus a beat-synced wave pulse — like a DJ deck display.
+Pioneer CDJ–style spectrum light visualizer for iPhone Safari. Uses the device microphone, analyzes live audio, and draws cyan/orange frequency bars plus a beat-synced wave pulse and heavy 808 kick boom — like a DJ deck display.
 
 ## One-command local preview
 

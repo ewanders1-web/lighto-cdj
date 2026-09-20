@@ -3,9 +3,14 @@
 
   const CYAN = [0, 229, 255];
   const ORANGE = [255, 106, 0];
+  // Deep TR-808 kick heat (still in CDJ orange family)
+  const BOOM = [255, 72, 0];
+  const BOOM_CORE = [255, 140, 40];
   const BAR_COUNT = 48;
   const MAX_PULSES = 6;
   const PULSE_LIFE_MS = 720;
+  const MAX_BOOMS = 4;
+  const BOOM_LIFE_MS = 1250;
 
   const els = {
     canvas: document.getElementById("viz"),
@@ -38,10 +43,15 @@
   // Beat detection state
   let bassHistory = [];
   let bassAvg = 0.08;
+  let subHistory = [];
+  let subAvg = 0.06;
   let lastBeat = 0;
+  let last808 = 0;
   let beatInterval = 500; // ms, adapts toward detected tempo
   let pulseFlash = 0; // 0..1 screen bloom residual
+  let boomFlash = 0; // heavy 808 residual
   const pulses = []; // { t0, strength, hueMix }
+  const booms = []; // { t0, strength } — fat 808 kicks
 
   function setStatus(text, mode) {
     els.status.textContent = text;
@@ -71,6 +81,52 @@
     pulseFlash = Math.min(1, pulseFlash + 0.55 + strength * 0.45);
     els.display.classList.add("flash");
     window.setTimeout(() => els.display.classList.remove("flash"), 110);
+  }
+
+  function spawn808(strength, now) {
+    const s = Math.min(1, strength);
+    booms.push({ t0: now, strength: s });
+    while (booms.length > MAX_BOOMS) booms.shift();
+    boomFlash = Math.min(1, boomFlash + 0.7 + s * 0.5);
+    // Also kick a lighter ring so waves stay in sync
+    spawnPulse(0.45 + s * 0.4, now);
+    els.display.classList.add("flash-808");
+    window.setTimeout(() => els.display.classList.remove("flash-808"), 220);
+  }
+
+  function detect808(sub, bass, energy, sens, now) {
+    subHistory.push(sub);
+    if (subHistory.length > 40) subHistory.shift();
+
+    let sum = 0;
+    for (let i = 0; i < subHistory.length; i++) sum += subHistory[i];
+    const mean = sum / Math.max(1, subHistory.length);
+    subAvg = subAvg * 0.9 + mean * 0.1;
+
+    // 808: deep sub onset, heavier than general bass tick
+    const thr = Math.max(0.1, subAvg * (1.55 - sens * 0.1) + 0.035);
+    const minGap = Math.max(220, Math.min(520, beatInterval * 0.7));
+    const isThump =
+      sub > thr &&
+      sub > 0.16 &&
+      sub >= bass * 0.72 && // sub carries the hit
+      sub > energy * 0.85;
+
+    if (isThump && now - last808 > minGap) {
+      const gap = now - last808;
+      if (last808 > 0 && gap > 280 && gap < 1600) {
+        beatInterval = beatInterval * 0.65 + gap * 0.35;
+      }
+      last808 = now;
+      lastBeat = now; // suppress double general-beat flash
+      const strength = Math.min(
+        1.15,
+        ((sub - thr) / Math.max(0.06, thr)) * 0.5 + sub * 1.15
+      ) * Math.min(1.25, sens * 0.9);
+      spawn808(strength, now);
+      return true;
+    }
+    return false;
   }
 
   function detectBeat(bass, energy, sens, now) {
@@ -110,6 +166,81 @@
     }
 
     return false;
+  }
+
+  function draw808Booms(w, h, now) {
+    const cx = w * 0.5;
+    const cy = h * 0.5;
+    const maxR = Math.hypot(w, h) * 0.7;
+
+    // Lingering sub bloom — slow fat decay like an 808 tail
+    if (boomFlash > 0.008) {
+      const rBloom = maxR * (0.42 + boomFlash * 0.35);
+      const bloom = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, rBloom);
+      bloom.addColorStop(0, `rgba(${BOOM_CORE[0]},${BOOM_CORE[1]},${BOOM_CORE[2]},${0.55 * boomFlash})`);
+      bloom.addColorStop(0.22, `rgba(${BOOM[0]},${BOOM[1]},${BOOM[2]},${0.38 * boomFlash})`);
+      bloom.addColorStop(0.55, `rgba(255,106,0,${0.14 * boomFlash})`);
+      bloom.addColorStop(0.78, `rgba(0,229,255,${0.06 * boomFlash})`);
+      bloom.addColorStop(1, "rgba(0,0,0,0)");
+      ctx2d.fillStyle = bloom;
+      ctx2d.fillRect(0, 0, w, h);
+      boomFlash *= 0.935; // slower than ring pulse flash
+    }
+
+    for (let i = booms.length - 1; i >= 0; i--) {
+      const k = booms[i];
+      const age = (now - k.t0) / BOOM_LIFE_MS;
+      if (age >= 1) {
+        booms.splice(i, 1);
+        continue;
+      }
+
+      // Fast attack, long ease-out (thump then rumble)
+      const attack = Math.min(1, age / 0.08);
+      const body = age < 0.12 ? attack : Math.pow(1 - (age - 0.12) / 0.88, 1.35);
+      const expand = 1 - Math.pow(1 - Math.min(1, age * 1.15), 1.6);
+      const alpha = body * (0.65 + k.strength * 0.5);
+      const radius = (0.12 + expand * 0.88) * maxR * (0.85 + k.strength * 0.4);
+
+      // Fat filled disc (the boom)
+      const disc = ctx2d.createRadialGradient(cx, cy, radius * 0.05, cx, cy, radius);
+      disc.addColorStop(0, `rgba(255,200,120,${0.45 * alpha})`);
+      disc.addColorStop(0.18, `rgba(${BOOM_CORE[0]},${BOOM_CORE[1]},${BOOM_CORE[2]},${0.5 * alpha})`);
+      disc.addColorStop(0.45, `rgba(${BOOM[0]},${BOOM[1]},${BOOM[2]},${0.32 * alpha})`);
+      disc.addColorStop(0.72, `rgba(255,106,0,${0.12 * alpha})`);
+      disc.addColorStop(1, "rgba(0,0,0,0)");
+      ctx2d.fillStyle = disc;
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx2d.fill();
+
+      // Thick shockwave ring
+      const ringR = radius * (0.55 + expand * 0.4);
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, ringR, 0, Math.PI * 2);
+      ctx2d.strokeStyle = `rgba(${BOOM[0]},${BOOM[1]},${BOOM[2]},${alpha * 0.85})`;
+      ctx2d.lineWidth = Math.max(4 * dpr, (22 - age * 14) * dpr * (0.9 + k.strength));
+      ctx2d.stroke();
+
+      // Outer cyan rim (CDJ accent on the thump)
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, ringR * 1.08, 0, Math.PI * 2);
+      ctx2d.strokeStyle = `rgba(0,229,255,${alpha * 0.35})`;
+      ctx2d.lineWidth = Math.max(2 * dpr, 5 * dpr * (1 - age));
+      ctx2d.stroke();
+
+      // Horizontal sub pressure band — wide and soft
+      const bandH = (40 + k.strength * 70) * dpr * body;
+      const bandGrad = ctx2d.createLinearGradient(0, cy - bandH, 0, cy + bandH);
+      bandGrad.addColorStop(0, "rgba(0,0,0,0)");
+      bandGrad.addColorStop(0.4, `rgba(${BOOM[0]},${BOOM[1]},${BOOM[2]},${0.28 * alpha})`);
+      bandGrad.addColorStop(0.5, `rgba(255,180,80,${0.4 * alpha})`);
+      bandGrad.addColorStop(0.6, `rgba(${BOOM[0]},${BOOM[1]},${BOOM[2]},${0.28 * alpha})`);
+      bandGrad.addColorStop(1, "rgba(0,0,0,0)");
+      ctx2d.fillStyle = bandGrad;
+      const spread = w * 0.55 * (0.5 + expand * 0.55) * (0.75 + k.strength * 0.35);
+      ctx2d.fillRect(cx - spread, cy - bandH, spread * 2, bandH * 2);
+    }
   }
 
   function drawPulses(w, h, now) {
@@ -288,8 +419,18 @@
     const binCount = freqData.length;
     let energy = 0;
     let bass = 0;
+    let sub = 0;
 
-    // Bass from lowest ~8% of bins (kick-focused)
+    // Sub / 808 territory: lowest bins (~20–80 Hz at typical sample rates)
+    const subBins = Math.max(2, Math.min(6, Math.floor(binCount * 0.03)));
+    // Weight lowest bins harder (true 808 sub ~20–80 Hz)
+    let subSum = freqData[0] * 1.6;
+    if (binCount > 1) subSum += freqData[1] * 1.3;
+    for (let j = 2; j < subBins; j++) subSum += freqData[j];
+    const subWeight = 1.6 + (binCount > 1 ? 1.3 : 0) + Math.max(0, subBins - 2);
+    sub = Math.min(1, (subSum / subWeight / 255) * sens * 1.15);
+
+    // Bass from lowest ~8% of bins (kick-focused, broader than sub)
     const bassBins = Math.max(4, Math.floor(binCount * 0.08));
     let bassSum = 0;
     for (let j = 0; j < bassBins; j++) bassSum += freqData[j];
@@ -313,7 +454,13 @@
 
     energy /= BAR_COUNT;
 
-    detectBeat(bass, energy, sens, now);
+    // 808 sub-thump first; general beat fills non-808 hits
+    if (!detect808(sub, bass, energy, sens, now)) {
+      detectBeat(bass, energy, sens, now);
+    }
+
+    // Layer 0: heavy 808 boom (behind everything for weight)
+    draw808Booms(w, h, now);
 
     // Layer 1: beat wave pulses (behind bars so spectrum stays readable)
     drawPulses(w, h, now);
@@ -356,7 +503,7 @@
     ctx2d.restore();
 
     // VU / peak
-    const peak = Math.min(1, Math.max(energy * 1.25, bass * 1.05));
+    const peak = Math.min(1, Math.max(energy * 1.25, bass * 1.05, sub * 1.1));
     peakHold = Math.max(peak, peakHold - 0.012);
     peakDecay = peakHold;
     els.vuFill.style.width = `${(peak * 100).toFixed(1)}%`;
@@ -429,9 +576,14 @@
       smoothed.fill(0);
       bassHistory = [];
       bassAvg = 0.08;
+      subHistory = [];
+      subAvg = 0.06;
       lastBeat = 0;
+      last808 = 0;
       pulses.length = 0;
+      booms.length = 0;
       pulseFlash = 0;
+      boomFlash = 0;
 
       running = true;
       els.overlay.hidden = true;
@@ -485,7 +637,10 @@
     freqData = null;
     timeData = null;
     pulses.length = 0;
+    booms.length = 0;
     pulseFlash = 0;
+    boomFlash = 0;
+    els.display.classList.remove("flash", "flash-808");
 
     els.toggleBtn.textContent = "Stop";
     els.toggleBtn.classList.remove("running");
