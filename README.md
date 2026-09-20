@@ -1,6 +1,6 @@
 # Lighto
 
-Pioneer CDJ–style spectrum light visualizer for iPhone Safari. Uses the device microphone, analyzes live audio, and draws cyan/orange frequency bars plus a beat-synced wave pulse and heavy 808 kick boom — like a DJ deck display.
+Pioneer CDJ–style spectrum light visualizer for iPhone Safari. Uses the device microphone, analyzes live audio, and draws cyan/orange frequency bars, a beat-synced wave pulse, heavy 808 kick boom, jog-platter glow, and a live BPM readout.
 
 ## One-command local preview
 
@@ -12,62 +12,54 @@ Then open `http://localhost:3000` on the same machine.
 
 ## Open on iPhone Safari (mic requires HTTPS)
 
-Safari only grants microphone access over **HTTPS** (or `localhost`). Options:
-
-### A) GitHub Pages (recommended)
-
 **Live:** https://ewanders1-web.github.io/lighto-cdj/
-
-Open that HTTPS URL on your iPhone (repo is public so Pages works on the free plan).
 
 1. Open the Pages URL in **Safari**
 2. Tap **Tap to listen**
 3. Allow microphone access when prompted
 
-### B) Local LAN + tunnel
+### Add to Home Screen (fullscreen PWA)
 
-On your computer:
+1. Open the site in **Safari** (not Chrome/in-app browsers)
+2. Tap the **Share** button
+3. Tap **Add to Home Screen**
+4. Open **Lighto** from your home screen for a fullscreen, standalone display
+
+A service worker caches the app shell for basic offline loading (mic still needs a network permission prompt on first use in a session as usual).
+
+### Local LAN + tunnel
 
 ```bash
 npx --yes serve -l 3000
-```
-
-In another terminal, expose it with a tunnel (HTTPS):
-
-```bash
+# other terminal:
 npx --yes ngrok http 3000
-# or: cloudflared tunnel --url http://localhost:3000
 ```
 
-Open the `https://…` tunnel URL in iPhone Safari, then tap **Tap to listen**.
-
-### C) Same Mac + localhost
-
-If you open the page on the Mac that is serving it at `http://localhost:…`, Safari treats localhost as a secure context. That does **not** help a remote iPhone on the LAN over plain `http://`.
+Open the `https://…` tunnel URL in iPhone Safari.
 
 ## Safari notes
 
-- Mic start requires a **user gesture** (the Tap to listen button).
-- You must **allow microphone** permission for the site.
-- If denied: Settings → Safari → (or site settings) → enable Microphone, then reload.
-- AudioContext may suspend when the tab is backgrounded; Lighto resumes it when you return.
+- Mic start requires a **user gesture** (Tap to listen).
+- Allow **Microphone** for the site.
+- AudioContext may suspend when backgrounded; Lighto resumes on return.
 
 ## Controls
 
 | Control | Action |
 |--------|--------|
 | **Tap to listen** | Start mic + visualizer |
-| **Stop** | Stop mic and freeze idle display |
-| **Sens** | Sensitivity of spectrum / energy response |
+| **Stop** | Stop mic |
+| **Party** | Hide chrome for max display (or auto-hides after ~3.5s while listening). Tap the display to bring controls back |
+| **Sens** | Sensitivity |
+| **BPM** | Live tempo estimate from kick/beat gaps (`--.-` until confident) |
 
 ## Tech
 
-Vanilla HTML / CSS / JS. No build step, no backend.
+Vanilla HTML / CSS / JS. PWA manifest + service worker. No backend.
 
 ```
-index.html   — shell + controls
-styles.css   — black chassis, safe-area, mobile layout
-app.js       — getUserMedia → AnalyserNode → canvas spectrum
+index.html / styles.css / app.js
+manifest.webmanifest / sw.js / icons/
 ```
 
 ## Privacy

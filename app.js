@@ -13,16 +13,21 @@
   const BOOM_LIFE_MS = 1250;
 
   const els = {
+    app: document.getElementById("app"),
     canvas: document.getElementById("viz"),
     overlay: document.getElementById("overlay"),
     denied: document.getElementById("denied"),
     startBtn: document.getElementById("startBtn"),
     toggleBtn: document.getElementById("toggleBtn"),
+    partyBtn: document.getElementById("partyBtn"),
+    partyHint: document.getElementById("partyHint"),
     sensitivity: document.getElementById("sensitivity"),
     status: document.getElementById("status"),
     display: document.getElementById("display"),
     vuFill: document.getElementById("vuFill"),
     vuPeak: document.getElementById("vuPeak"),
+    bpmValue: document.getElementById("bpmValue"),
+    bpmCornerValue: document.getElementById("bpmCornerValue"),
   };
 
   const ctx2d = els.canvas.getContext("2d", { alpha: false });
@@ -56,6 +61,16 @@
   const pulses = []; // { t0, strength, hueMix }
   const booms = []; // { t0, strength } — fat 808 kicks
 
+  // BPM / jog / party
+  const beatGaps = [];
+  let bpmDisplay = 0;
+  let bpmConfident = false;
+  let jogAngle = 0;
+  let jogPulse = 0;
+  let partyMode = false;
+  let partyTimer = 0;
+  const PARTY_HIDE_MS = 3500;
+
   function setStatus(text, mode) {
     els.status.textContent = text;
     els.status.classList.remove("live", "error");
@@ -77,11 +92,75 @@
     ];
   }
 
+  function setBpmText(text) {
+    if (els.bpmValue) els.bpmValue.textContent = text;
+    if (els.bpmCornerValue) els.bpmCornerValue.textContent = text;
+  }
+
+  function noteBeatGap(gapMs) {
+    if (!(gapMs > 250 && gapMs < 1500)) return;
+    beatGaps.push(gapMs);
+    if (beatGaps.length > 10) beatGaps.shift();
+    if (beatGaps.length < 3) {
+      bpmConfident = false;
+      setBpmText("--.-");
+      return;
+    }
+    const sorted = beatGaps.slice().sort((a, b) => a - b);
+    const mid = sorted[Math.floor(sorted.length / 2)];
+    const instant = 60000 / mid;
+    if (instant < 60 || instant > 200) return;
+    bpmDisplay = bpmDisplay > 0 ? bpmDisplay * 0.72 + instant * 0.28 : instant;
+    const spread = sorted[sorted.length - 1] - sorted[0];
+    bpmConfident = beatGaps.length >= 4 && spread < mid * 0.35;
+    if (bpmConfident) setBpmText(bpmDisplay.toFixed(1));
+    else if (beatGaps.length >= 3) setBpmText("~" + bpmDisplay.toFixed(0));
+    else setBpmText("--.-");
+  }
+
+  function resetBpm() {
+    beatGaps.length = 0;
+    bpmDisplay = 0;
+    bpmConfident = false;
+    setBpmText("--.-");
+  }
+
+  function setParty(on) {
+    partyMode = !!on;
+    els.app.classList.toggle("party", partyMode);
+    if (els.partyBtn) {
+      els.partyBtn.classList.toggle("party-on", partyMode);
+      els.partyBtn.setAttribute("aria-pressed", partyMode ? "true" : "false");
+    }
+    if (els.partyHint) els.partyHint.hidden = !partyMode;
+    if (partyMode) {
+      clearTimeout(partyTimer);
+      partyTimer = 0;
+    } else {
+      schedulePartyHide();
+    }
+    resize();
+  }
+
+  function schedulePartyHide() {
+    clearTimeout(partyTimer);
+    if (!running || partyMode) return;
+    partyTimer = window.setTimeout(() => {
+      if (running) setParty(true);
+    }, PARTY_HIDE_MS);
+  }
+
+  function revealChrome() {
+    if (partyMode) setParty(false);
+    schedulePartyHide();
+  }
+
   function spawnPulse(strength, now) {
     const hueMix = strength > 0.75 ? 0.85 : strength > 0.55 ? 0.45 : 0.15;
     pulses.push({ t0: now, strength: Math.min(1, strength), hueMix });
     while (pulses.length > MAX_PULSES) pulses.shift();
     pulseFlash = Math.min(1, pulseFlash + 0.55 + strength * 0.45);
+    jogPulse = Math.min(1, jogPulse + 0.55 + strength * 0.4);
     els.display.classList.add("flash");
     window.setTimeout(() => els.display.classList.remove("flash"), 110);
   }
@@ -91,6 +170,7 @@
     booms.push({ t0: now, strength: Math.min(1, s) });
     while (booms.length > MAX_BOOMS) booms.shift();
     boomFlash = Math.min(1, boomFlash + 0.85 + s * 0.55);
+    jogPulse = Math.min(1, jogPulse + 0.9 + s * 0.5);
     // Ring rides with the boom
     spawnPulse(0.55 + s * 0.4, now);
     els.display.classList.add("flash-808");
@@ -124,6 +204,7 @@
       const gap = now - last808;
       if (last808 > 0 && gap > 260 && gap < 1600) {
         beatInterval = beatInterval * 0.65 + gap * 0.35;
+        noteBeatGap(gap);
       }
       last808 = now;
       lastBeat = now;
@@ -153,6 +234,7 @@
       const gap = now - lastBeat;
       if (lastBeat > 0 && gap > 240 && gap < 1400) {
         beatInterval = beatInterval * 0.7 + gap * 0.3;
+        noteBeatGap(gap);
       }
       lastBeat = now;
       const strength = Math.min(1, (bass - threshold) / Math.max(0.04, threshold) * 0.6 + bass);
@@ -172,6 +254,8 @@
       energy > 0.06 &&
       now - lastBeat > Math.max(240, beatInterval * 0.8)
     ) {
+      const gap = now - lastBeat;
+      if (lastBeat > 0) noteBeatGap(gap);
       lastBeat = now;
       spawnPulse(Math.min(0.85, energy * 1.4 * sens * 0.7), now);
       return true;
@@ -194,6 +278,71 @@
     g.addColorStop(1, "rgba(0,0,0,0)");
     ctx2d.fillStyle = g;
     ctx2d.fillRect(0, 0, w, h);
+  }
+
+  function drawJogPlatter(w, h, energy, kick, now) {
+    const cx = w * 0.5;
+    const cy = h * 0.46;
+    const baseR = Math.min(w, h) * 0.28;
+    const spin = (bpmConfident ? bpmDisplay : 120) / 60;
+    jogAngle += (0.008 + energy * 0.02 + kick * 0.03) * (0.7 + spin * 0.15);
+    jogPulse *= 0.9;
+    const breath = 1 + ambientGlow * 0.06 + jogPulse * 0.12;
+    const r = baseR * breath;
+
+    ctx2d.beginPath();
+    ctx2d.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx2d.strokeStyle = `rgba(0,229,255,${0.22 + ambientGlow * 0.35 + jogPulse * 0.4})`;
+    ctx2d.lineWidth = Math.max(2 * dpr, (3.5 + jogPulse * 4) * dpr);
+    ctx2d.stroke();
+
+    ctx2d.beginPath();
+    ctx2d.arc(cx, cy, r * 0.78, 0, Math.PI * 2);
+    ctx2d.strokeStyle = `rgba(255,106,0,${0.16 + kick * 0.35 + jogPulse * 0.35})`;
+    ctx2d.lineWidth = Math.max(1.5 * dpr, (2.2 + jogPulse * 3) * dpr);
+    ctx2d.stroke();
+
+    const ticks = 24;
+    ctx2d.save();
+    ctx2d.translate(cx, cy);
+    ctx2d.rotate(jogAngle);
+    for (let i = 0; i < ticks; i++) {
+      const a = (i / ticks) * Math.PI * 2;
+      const major = i % 6 === 0;
+      const cos = Math.cos(a);
+      const sin = Math.sin(a);
+      const r0 = r * (major ? 0.88 : 0.92);
+      const r1 = r * (major ? 1.05 : 1.02);
+      ctx2d.beginPath();
+      ctx2d.moveTo(cos * r0, sin * r0);
+      ctx2d.lineTo(cos * r1, sin * r1);
+      if (major) {
+        ctx2d.strokeStyle = `rgba(0,229,255,${0.35 + jogPulse * 0.4})`;
+        ctx2d.lineWidth = 2 * dpr;
+      } else {
+        ctx2d.strokeStyle = `rgba(255,106,0,${0.2 + energy * 0.25})`;
+        ctx2d.lineWidth = 1.2 * dpr;
+      }
+      ctx2d.stroke();
+    }
+    ctx2d.beginPath();
+    ctx2d.arc(0, 0, r * 0.12, 0, Math.PI * 2);
+    ctx2d.fillStyle = `rgba(0,229,255,${0.15 + jogPulse * 0.45})`;
+    ctx2d.fill();
+    ctx2d.beginPath();
+    ctx2d.arc(0, 0, r * 0.06, 0, Math.PI * 2);
+    ctx2d.fillStyle = `rgba(255,106,0,${0.35 + jogPulse * 0.4})`;
+    ctx2d.fill();
+    ctx2d.restore();
+
+    const disc = ctx2d.createRadialGradient(cx, cy, r * 0.15, cx, cy, r);
+    disc.addColorStop(0, `rgba(0,40,50,${0.12 + ambientGlow * 0.1})`);
+    disc.addColorStop(0.7, `rgba(0,0,0,0.05)`);
+    disc.addColorStop(1, "rgba(0,0,0,0)");
+    ctx2d.fillStyle = disc;
+    ctx2d.beginPath();
+    ctx2d.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx2d.fill();
   }
 
   function draw808Booms(w, h, now) {
@@ -498,10 +647,13 @@
     // Always-on energy glow so the screen moves between beats
     drawAmbientEnergy(w, h, energy, kick);
 
-    // Layer 0: heavy 808 boom (behind everything for weight)
+    // CDJ jog platter (under pulses so booms/rings stay on top)
+    drawJogPlatter(w, h, energy, kick, now);
+
+    // Layer 0: heavy 808 boom
     draw808Booms(w, h, now);
 
-    // Layer 1: beat wave pulses (behind bars so spectrum stays readable)
+    // Layer 1: beat wave pulses
     drawPulses(w, h, now);
 
     // Layer 2: live waveform ribbon through the pulse center
@@ -634,6 +786,9 @@
       boomFlash = 0;
       ambientGlow = 0;
       statusTick = 0;
+      jogAngle = 0;
+      jogPulse = 0;
+      resetBpm();
 
       running = true;
       els.overlay.hidden = true;
@@ -642,6 +797,7 @@
       els.toggleBtn.textContent = "Stop";
       els.toggleBtn.classList.add("running");
       setStatus("LIVE · listening", "live");
+      schedulePartyHide();
 
       resize();
       cancelAnimationFrame(rafId);
@@ -700,6 +856,11 @@
     els.vuPeak.style.left = "0%";
     peakHold = 0;
 
+    clearTimeout(partyTimer);
+    partyTimer = 0;
+    if (partyMode) setParty(false);
+    resetBpm();
+
     if (showOverlay) {
       els.denied.hidden = true;
       els.overlay.hidden = false;
@@ -728,6 +889,24 @@
     if (running) stop(true);
   });
 
+  if (els.partyBtn) {
+    els.partyBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setParty(!partyMode);
+    });
+  }
+
+  els.display.addEventListener("click", (e) => {
+    if (!running) return;
+    if (e.target.closest(".tap-btn") || e.target.closest(".overlay") || e.target.closest(".denied")) return;
+    if (partyMode) revealChrome();
+    else schedulePartyHide();
+  });
+
+  els.app.addEventListener("touchstart", () => {
+    if (running && !partyMode) schedulePartyHide();
+  }, { passive: true });
+
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") resumeIfNeeded();
   });
@@ -744,6 +923,13 @@
     }, 120);
   });
 
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js?v=3").catch(() => {});
+    });
+  }
+
   resize();
   drawIdle();
+  setBpmText("--.-");
 })();
