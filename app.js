@@ -416,8 +416,8 @@
 
   function drawJogPlatter(w, h, energy, kick, now) {
     const cx = w * 0.5;
-    const cy = h * 0.46;
-    const baseR = Math.min(w, h) * 0.28;
+    const cy = h * 0.175;
+    const baseR = Math.min(w, h) * 0.14;
     const spin = (bpmConfident ? bpmDisplay : 120) / 60;
     jogAngle += (0.008 + energy * 0.02 + kick * 0.03) * (0.7 + spin * 0.15);
     jogPulse *= 0.9;
@@ -626,17 +626,20 @@
   }
 
   function spectralColor(bass, mid, high, amp) {
-    // Serato vibe: lows green/teal, highs cyan/white/lavender
+    // Club Serato RGB: bass red/orange, mids green/cyan, highs white/magenta
     const b = Math.min(1, bass);
     const m = Math.min(1, mid);
     const hi = Math.min(1, high);
-    const a = Math.min(1, amp);
-    let r = 20 + b * 40 + hi * 160 + m * 40;
-    let g = 120 + b * 100 + m * 60 + hi * 40;
-    let bl = 90 + b * 40 + m * 80 + hi * 140;
-    // purple tint on bright highs
-    r += hi * m * 50;
-    const glow = 0.45 + a * 0.55;
+    const a = Math.min(1, Math.max(0.15, amp));
+    // Weighted blend of vivid primaries
+    let r = b * 255 + m * 20 + hi * 220;
+    let g = b * 60 + m * 255 + hi * 120;
+    let bl = b * 10 + m * 200 + hi * 255;
+    // Magenta/purple push on bright highs
+    r = Math.min(255, r + hi * 80);
+    g = Math.min(255, g + m * 40);
+    // Floor so quiet columns still show hue, then scale by amp for punch
+    const glow = 0.55 + a * 0.7;
     return [
       Math.min(255, Math.round(r * glow)),
       Math.min(255, Math.round(g * glow)),
@@ -669,7 +672,7 @@
       sum += v * v;
     }
     let amp = Math.sqrt(sum / Math.max(1, n / step));
-    amp = Math.min(1, amp * sens * 3.2);
+    amp = Math.min(1, amp * sens * 4.4);
 
     const bc = freqData.length;
     const bHi = Math.max(3, (bc * 0.06) | 0);
@@ -679,9 +682,9 @@
     for (let j = 1; j < bHi; j++) { bs += freqData[j]; bn++; }
     for (let j = bHi; j < mHi; j++) { ms += freqData[j]; mn++; }
     for (let j = mHi; j < hHi; j++) { hs += freqData[j]; hn++; }
-    const bassB = Math.min(1, (bs / Math.max(1, bn) / 255) * sens * 1.3);
-    const midB = Math.min(1, (ms / Math.max(1, mn) / 255) * sens * 1.2);
-    const highB = Math.min(1, (hs / Math.max(1, hn) / 255) * sens * 1.25);
+    const bassB = Math.min(1, (bs / Math.max(1, bn) / 255) * sens * 1.55);
+    const midB = Math.min(1, (ms / Math.max(1, mn) / 255) * sens * 1.45);
+    const highB = Math.min(1, (hs / Math.max(1, hn) / 255) * sens * 1.5);
 
     const rise = amp - prevWaveAmp;
     prevWaveAmp = amp;
@@ -691,24 +694,24 @@
   }
 
   function drawSeratoWavePanel(w, h) {
-    // Lower-middle band: under jog / FLX meters, above spectrum bars
-    const panelTop = h * 0.52;
-    const panelH = h * 0.26;
+    // Primary visual band — tall Serato stack
+    const panelTop = h * 0.20;
+    const panelH = h * 0.58;
     const panelBot = panelTop + panelH;
-    const padX = w * 0.04;
+    const padX = w * 0.03;
     const innerW = w - padX * 2;
     const playX = padX + innerW * 0.5;
 
-    // Panel chrome
-    ctx2d.fillStyle = "rgba(0,0,0,0.72)";
+    // Deep black well for contrast
+    ctx2d.fillStyle = "rgba(0,0,0,0.88)";
     ctx2d.fillRect(padX - 2 * dpr, panelTop - 2 * dpr, innerW + 4 * dpr, panelH + 4 * dpr);
-    ctx2d.strokeStyle = "rgba(30,40,50,0.9)";
+    ctx2d.strokeStyle = "rgba(40,50,60,0.95)";
     ctx2d.lineWidth = 1 * dpr;
     ctx2d.strokeRect(padX - 2 * dpr, panelTop - 2 * dpr, innerW + 4 * dpr, panelH + 4 * dpr);
 
-    const topH = panelH * 0.52;
-    const midH = panelH * 0.12;
-    const botH = panelH * 0.36;
+    const topH = panelH * 0.56;
+    const midH = panelH * 0.11;
+    const botH = panelH * 0.33;
     const topY = panelTop;
     const midY = panelTop + topH;
     const botY = midY + midH;
@@ -762,37 +765,50 @@
       if (x < padX - colW) break;
 
       const [cr, cg, cb] = spectralColor(s.bass, s.mid, s.high, s.amp);
+      const cw = Math.max(1.5 * dpr, colW * 1.05);
 
-      // --- Top tier: detailed spectral waveform (symmetric) ---
+      // --- Top tier: bold spectral waveform (symmetric) ---
       const midTop = topY + topH * 0.5;
-      const half = Math.max(1, s.amp * topH * 0.48);
-      // low body (wider, greener)
-      const lowHalf = half * (0.55 + s.bass * 0.45);
-      ctx2d.fillStyle = `rgba(${Math.max(0, cr - 40)},${Math.min(255, cg + 30)},${Math.max(0, cb - 20)},0.85)`;
-      ctx2d.fillRect(x, midTop - lowHalf, Math.max(1, colW * 0.9), lowHalf * 2);
-      // high sparkle tips
-      const hiHalf = half * (0.35 + s.high * 0.65);
-      ctx2d.fillStyle = `rgba(${Math.min(255, cr + 80)},${Math.min(255, cg + 40)},${Math.min(255, cb + 60)},0.95)`;
-      ctx2d.fillRect(x, midTop - hiHalf, Math.max(1, colW * 0.55), Math.max(1, hiHalf * 0.22));
-      ctx2d.fillRect(x, midTop + hiHalf - Math.max(1, hiHalf * 0.22), Math.max(1, colW * 0.55), Math.max(1, hiHalf * 0.22));
-
-      // --- Mid tier: transient ribbon ---
-      const onsetH = Math.max(1, s.onset * midH * 0.95);
-      ctx2d.fillStyle = `rgba(40,${140 + s.onset * 80},${180 + s.onset * 60},${0.35 + s.onset * 0.65})`;
-      ctx2d.fillRect(x, midY + midH - onsetH, Math.max(1, colW * 0.85), onsetH);
-      if (s.onset > 0.45) {
-        ctx2d.fillStyle = `rgba(180,255,255,${s.onset})`;
-        ctx2d.fillRect(x, midY + 1, Math.max(1, colW * 0.7), 2 * dpr);
+      const half = Math.max(2 * dpr, s.amp * topH * 0.62);
+      // Bass body — thick red/orange core
+      const lowHalf = half * (0.5 + s.bass * 0.55);
+      const bassR = Math.min(255, 40 + s.bass * 215);
+      const bassG = Math.min(255, 20 + s.bass * 90 + s.mid * 40);
+      ctx2d.fillStyle = `rgba(${bassR},${bassG},20,0.95)`;
+      ctx2d.fillRect(x, midTop - lowHalf, cw, lowHalf * 2);
+      // Mid layer — green/cyan overlay
+      const midHalf = half * (0.4 + s.mid * 0.55);
+      ctx2d.fillStyle = `rgba(${Math.max(0, cr - 30)},${Math.min(255, cg + 50)},${Math.min(255, cb)},0.9)`;
+      ctx2d.fillRect(x + cw * 0.12, midTop - midHalf, Math.max(1, cw * 0.76), midHalf * 2);
+      // High tips — hot white / magenta
+      const hiHalf = half * (0.4 + s.high * 0.7);
+      const tipH = Math.max(2 * dpr, hiHalf * 0.28);
+      ctx2d.fillStyle = `rgba(${Math.min(255, 200 + s.high * 55)},${Math.min(255, 180 + s.high * 40)},${Math.min(255, 220 + s.high * 35)},1)`;
+      ctx2d.fillRect(x, midTop - hiHalf, Math.max(1, cw * 0.7), tipH);
+      ctx2d.fillRect(x, midTop + hiHalf - tipH, Math.max(1, cw * 0.7), tipH);
+      if (s.high > 0.35) {
+        ctx2d.fillStyle = `rgba(255,80,255,${0.4 + s.high * 0.5})`;
+        ctx2d.fillRect(x, midTop - hiHalf - 1 * dpr, Math.max(1, cw * 0.45), 2 * dpr);
+        ctx2d.fillRect(x, midTop + hiHalf - 1 * dpr, Math.max(1, cw * 0.45), 2 * dpr);
       }
 
-      // --- Bottom tier: overview deep blue/cyan ---
+      // --- Mid tier: transient ribbon (hot cyan/magenta spikes) ---
+      const onsetH = Math.max(2 * dpr, s.onset * midH * 0.98);
+      ctx2d.fillStyle = `rgba(${30 + s.onset * 100},${160 + s.onset * 95},${220},${0.45 + s.onset * 0.55})`;
+      ctx2d.fillRect(x, midY + midH - onsetH, Math.max(1, cw * 0.9), onsetH);
+      if (s.onset > 0.4) {
+        ctx2d.fillStyle = `rgba(255,255,255,${s.onset})`;
+        ctx2d.fillRect(x, midY + 1, Math.max(1, cw * 0.75), 2.5 * dpr);
+      }
+
+      // --- Bottom tier: vivid overview (bass-orange + cyan highs) ---
       const midBot = botY + botH * 0.5;
-      const botHalf = Math.max(1, s.amp * botH * 0.46);
-      const br = 20 + s.bass * 30;
-      const bg = 80 + s.mid * 100 + s.amp * 40;
-      const bb = 140 + s.high * 80 + s.amp * 60;
-      ctx2d.fillStyle = `rgba(${br},${bg},${bb},0.9)`;
-      ctx2d.fillRect(x, midBot - botHalf, Math.max(1, colW * 0.9), botHalf * 2);
+      const botHalf = Math.max(2 * dpr, s.amp * botH * 0.58);
+      const br = Math.min(255, 30 + s.bass * 200 + s.amp * 40);
+      const bg = Math.min(255, 40 + s.mid * 180 + s.amp * 50);
+      const bb = Math.min(255, 90 + s.high * 165 + s.amp * 50);
+      ctx2d.fillStyle = `rgba(${br},${bg},${bb},0.95)`;
+      ctx2d.fillRect(x, midBot - botHalf, cw, botHalf * 2);
     }
 
     // Centerlines
@@ -978,7 +994,7 @@
 
     // Spectrum bars along the bottom (shorter so panel stays readable)
     const punch = 1 + kick * 0.35 + ambientGlow * 0.2;
-    const specUsable = usable * 0.38;
+    const specUsable = usable * 0.16;
     const specBase = h - padY;
     for (let i = 0; i < BAR_COUNT; i++) {
       const level = Math.min(1, smoothed[i] * punch);
@@ -1307,7 +1323,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=5").catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=6").catch(() => {});
     });
   }
 
