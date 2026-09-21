@@ -92,6 +92,18 @@
   let timeL = null;
   let timeR = null;
 
+  // Serato-style spectral waveform history (live mic scroll)
+  const WAVE_COLS = 220;
+  const waveHist = new Array(WAVE_COLS);
+  for (let i = 0; i < WAVE_COLS; i++) {
+    waveHist[i] = { amp: 0, bass: 0, mid: 0, high: 0, onset: 0 };
+  }
+  let waveWrite = 0;
+  let waveFilled = 0;
+  let waveBarCounter = 7;
+  let lastWaveBarMs = 0;
+  let prevWaveAmp = 0;
+
   function setStatus(text, mode) {
     els.status.textContent = text;
     els.status.classList.remove("live", "error");
@@ -613,42 +625,223 @@
     }
   }
 
-  function drawWaveformRibbon(w, h, energy) {
-    if (!timeData) return;
-    analyser.getByteTimeDomainData(timeData);
+  function spectralColor(bass, mid, high, amp) {
+    // Serato vibe: lows green/teal, highs cyan/white/lavender
+    const b = Math.min(1, bass);
+    const m = Math.min(1, mid);
+    const hi = Math.min(1, high);
+    const a = Math.min(1, amp);
+    let r = 20 + b * 40 + hi * 160 + m * 40;
+    let g = 120 + b * 100 + m * 60 + hi * 40;
+    let bl = 90 + b * 40 + m * 80 + hi * 140;
+    // purple tint on bright highs
+    r += hi * m * 50;
+    const glow = 0.45 + a * 0.55;
+    return [
+      Math.min(255, Math.round(r * glow)),
+      Math.min(255, Math.round(g * glow)),
+      Math.min(255, Math.round(bl * glow)),
+    ];
+  }
 
-    const midY = h * 0.48;
-    const amp = h * 0.07 * (0.35 + energy * 1.4);
-    const padX = w * 0.06;
+  function pushWaveSample(amp, bass, mid, high, onset, now) {
+    waveHist[waveWrite] = { amp, bass, mid, high, onset };
+    waveWrite = (waveWrite + 1) % WAVE_COLS;
+    if (waveFilled < WAVE_COLS) waveFilled++;
 
-    ctx2d.beginPath();
+    // Advance fake bar numbers on confident beat gaps
+    const barMs = bpmConfident && bpmDisplay > 0 ? (60000 / bpmDisplay) * 4 : beatInterval * 4;
+    if (onset > 0.35 && now - lastWaveBarMs > barMs * 0.85) {
+      lastWaveBarMs = now;
+      waveBarCounter = (waveBarCounter % 16) + 1;
+      if (waveBarCounter < 7) waveBarCounter = 7;
+    }
+  }
+
+  function sampleAndPushWave(kick, bass, energy, sens, now) {
+    if (!timeData || !freqData) return;
+    // RMS amp from time domain
+    let sum = 0;
     const n = timeData.length;
-    const step = Math.max(1, Math.floor(n / 128));
-    for (let i = 0, x = 0; i < n; i += step, x++) {
-      const t = i / (n - 1);
-      const px = padX + t * (w - padX * 2);
+    const step = Math.max(1, (n / 64) | 0);
+    for (let i = 0; i < n; i += step) {
       const v = (timeData[i] - 128) / 128;
-      const py = midY + v * amp;
-      if (x === 0) ctx2d.moveTo(px, py);
-      else ctx2d.lineTo(px, py);
+      sum += v * v;
     }
-    ctx2d.strokeStyle = `rgba(0,229,255,${0.18 + energy * 0.35})`;
-    ctx2d.lineWidth = Math.max(1.2 * dpr, 1.5 * dpr);
+    let amp = Math.sqrt(sum / Math.max(1, n / step));
+    amp = Math.min(1, amp * sens * 3.2);
+
+    const bc = freqData.length;
+    const bHi = Math.max(3, (bc * 0.06) | 0);
+    const mHi = Math.max(bHi + 1, (bc * 0.25) | 0);
+    const hHi = Math.max(mHi + 1, (bc * 0.55) | 0);
+    let bs = 0, ms = 0, hs = 0, bn = 0, mn = 0, hn = 0;
+    for (let j = 1; j < bHi; j++) { bs += freqData[j]; bn++; }
+    for (let j = bHi; j < mHi; j++) { ms += freqData[j]; mn++; }
+    for (let j = mHi; j < hHi; j++) { hs += freqData[j]; hn++; }
+    const bassB = Math.min(1, (bs / Math.max(1, bn) / 255) * sens * 1.3);
+    const midB = Math.min(1, (ms / Math.max(1, mn) / 255) * sens * 1.2);
+    const highB = Math.min(1, (hs / Math.max(1, hn) / 255) * sens * 1.25);
+
+    const rise = amp - prevWaveAmp;
+    prevWaveAmp = amp;
+    const onset = Math.min(1, Math.max(0, rise * 4 + kick * 0.55 + (amp > 0.2 && rise > 0.015 ? 0.35 : 0)));
+
+    pushWaveSample(amp, Math.max(bassB, bass * 0.7), midB, highB, onset, now);
+  }
+
+  function drawSeratoWavePanel(w, h) {
+    // Lower-middle band: under jog / FLX meters, above spectrum bars
+    const panelTop = h * 0.52;
+    const panelH = h * 0.26;
+    const panelBot = panelTop + panelH;
+    const padX = w * 0.04;
+    const innerW = w - padX * 2;
+    const playX = padX + innerW * 0.5;
+
+    // Panel chrome
+    ctx2d.fillStyle = "rgba(0,0,0,0.72)";
+    ctx2d.fillRect(padX - 2 * dpr, panelTop - 2 * dpr, innerW + 4 * dpr, panelH + 4 * dpr);
+    ctx2d.strokeStyle = "rgba(30,40,50,0.9)";
+    ctx2d.lineWidth = 1 * dpr;
+    ctx2d.strokeRect(padX - 2 * dpr, panelTop - 2 * dpr, innerW + 4 * dpr, panelH + 4 * dpr);
+
+    const topH = panelH * 0.52;
+    const midH = panelH * 0.12;
+    const botH = panelH * 0.36;
+    const topY = panelTop;
+    const midY = panelTop + topH;
+    const botY = midY + midH;
+
+    const cols = Math.min(waveFilled, WAVE_COLS);
+    if (cols < 2) {
+      // idle placeholder centerline
+      ctx2d.strokeStyle = "rgba(0,180,200,0.15)";
+      ctx2d.beginPath();
+      ctx2d.moveTo(padX, topY + topH * 0.5);
+      ctx2d.lineTo(padX + innerW, topY + topH * 0.5);
+      ctx2d.stroke();
+      // playhead
+      ctx2d.strokeStyle = "rgba(255,255,255,0.85)";
+      ctx2d.lineWidth = Math.max(1.5 * dpr, 2 * dpr);
+      ctx2d.beginPath();
+      ctx2d.moveTo(playX, panelTop);
+      ctx2d.lineTo(playX, panelBot);
+      ctx2d.stroke();
+      return;
+    }
+
+    const colW = Math.max(1, (innerW * 0.5) / Math.max(1, cols - 1));
+
+    // Grid / bar lines across all tiers (left of playhead = history)
+    const barPx = Math.max(18 * dpr, innerW * 0.07);
+    ctx2d.font = `${Math.max(8, 9 * dpr)}px -apple-system, sans-serif`;
+    ctx2d.textAlign = "center";
+    for (let gx = playX; gx >= padX; gx -= barPx) {
+      ctx2d.strokeStyle = "rgba(80,90,100,0.28)";
+      ctx2d.lineWidth = 1 * dpr;
+      ctx2d.beginPath();
+      ctx2d.moveTo(gx, panelTop);
+      ctx2d.lineTo(gx, panelBot);
+      ctx2d.stroke();
+    }
+    // Future-side faint grid
+    for (let gx = playX + barPx; gx <= padX + innerW; gx += barPx) {
+      ctx2d.strokeStyle = "rgba(60,70,80,0.15)";
+      ctx2d.beginPath();
+      ctx2d.moveTo(gx, panelTop);
+      ctx2d.lineTo(gx, panelBot);
+      ctx2d.stroke();
+    }
+
+    // Draw history columns: newest at playhead, older to the left
+    for (let i = 0; i < cols; i++) {
+      const idx = (waveWrite - 1 - i + WAVE_COLS * 4) % WAVE_COLS;
+      const s = waveHist[idx];
+      const x = playX - i * colW;
+      if (x < padX - colW) break;
+
+      const [cr, cg, cb] = spectralColor(s.bass, s.mid, s.high, s.amp);
+
+      // --- Top tier: detailed spectral waveform (symmetric) ---
+      const midTop = topY + topH * 0.5;
+      const half = Math.max(1, s.amp * topH * 0.48);
+      // low body (wider, greener)
+      const lowHalf = half * (0.55 + s.bass * 0.45);
+      ctx2d.fillStyle = `rgba(${Math.max(0, cr - 40)},${Math.min(255, cg + 30)},${Math.max(0, cb - 20)},0.85)`;
+      ctx2d.fillRect(x, midTop - lowHalf, Math.max(1, colW * 0.9), lowHalf * 2);
+      // high sparkle tips
+      const hiHalf = half * (0.35 + s.high * 0.65);
+      ctx2d.fillStyle = `rgba(${Math.min(255, cr + 80)},${Math.min(255, cg + 40)},${Math.min(255, cb + 60)},0.95)`;
+      ctx2d.fillRect(x, midTop - hiHalf, Math.max(1, colW * 0.55), Math.max(1, hiHalf * 0.22));
+      ctx2d.fillRect(x, midTop + hiHalf - Math.max(1, hiHalf * 0.22), Math.max(1, colW * 0.55), Math.max(1, hiHalf * 0.22));
+
+      // --- Mid tier: transient ribbon ---
+      const onsetH = Math.max(1, s.onset * midH * 0.95);
+      ctx2d.fillStyle = `rgba(40,${140 + s.onset * 80},${180 + s.onset * 60},${0.35 + s.onset * 0.65})`;
+      ctx2d.fillRect(x, midY + midH - onsetH, Math.max(1, colW * 0.85), onsetH);
+      if (s.onset > 0.45) {
+        ctx2d.fillStyle = `rgba(180,255,255,${s.onset})`;
+        ctx2d.fillRect(x, midY + 1, Math.max(1, colW * 0.7), 2 * dpr);
+      }
+
+      // --- Bottom tier: overview deep blue/cyan ---
+      const midBot = botY + botH * 0.5;
+      const botHalf = Math.max(1, s.amp * botH * 0.46);
+      const br = 20 + s.bass * 30;
+      const bg = 80 + s.mid * 100 + s.amp * 40;
+      const bb = 140 + s.high * 80 + s.amp * 60;
+      ctx2d.fillStyle = `rgba(${br},${bg},${bb},0.9)`;
+      ctx2d.fillRect(x, midBot - botHalf, Math.max(1, colW * 0.9), botHalf * 2);
+    }
+
+    // Centerlines
+    ctx2d.strokeStyle = "rgba(0,200,220,0.12)";
+    ctx2d.lineWidth = 1 * dpr;
+    ctx2d.beginPath();
+    ctx2d.moveTo(padX, topY + topH * 0.5);
+    ctx2d.lineTo(padX + innerW, topY + topH * 0.5);
+    ctx2d.stroke();
+    ctx2d.beginPath();
+    ctx2d.moveTo(padX, botY + botH * 0.5);
+    ctx2d.lineTo(padX + innerW, botY + botH * 0.5);
     ctx2d.stroke();
 
-    // Orange ghost offset
+    // Tier separators
+    ctx2d.strokeStyle = "rgba(50,60,70,0.7)";
     ctx2d.beginPath();
-    for (let i = 0, x = 0; i < n; i += step, x++) {
-      const t = i / (n - 1);
-      const px = padX + t * (w - padX * 2);
-      const v = (timeData[i] - 128) / 128;
-      const py = midY + v * amp * 0.7 + 3 * dpr;
-      if (x === 0) ctx2d.moveTo(px, py);
-      else ctx2d.lineTo(px, py);
-    }
-    ctx2d.strokeStyle = `rgba(255,106,0,${0.1 + energy * 0.22})`;
-    ctx2d.lineWidth = Math.max(1 * dpr, 1.2 * dpr);
+    ctx2d.moveTo(padX, midY);
+    ctx2d.lineTo(padX + innerW, midY);
+    ctx2d.moveTo(padX, botY);
+    ctx2d.lineTo(padX + innerW, botY);
     ctx2d.stroke();
+
+    // Bar numbers on bottom tier (left of playhead)
+    ctx2d.fillStyle = "rgba(220,230,240,0.75)";
+    let barNum = waveBarCounter;
+    for (let gx = playX, k = 0; gx >= padX && k < 8; gx -= barPx, k++) {
+      const label = ((barNum - k - 1 + 64) % 16) + 1;
+      ctx2d.fillText(String(label), gx, botY + 10 * dpr);
+    }
+
+    // Bright white playhead through all tiers
+    ctx2d.strokeStyle = "rgba(255,255,255,0.95)";
+    ctx2d.lineWidth = Math.max(1.5 * dpr, 2 * dpr);
+    ctx2d.shadowColor = "rgba(255,255,255,0.6)";
+    ctx2d.shadowBlur = 6 * dpr;
+    ctx2d.beginPath();
+    ctx2d.moveTo(playX, panelTop);
+    ctx2d.lineTo(playX, panelBot);
+    ctx2d.stroke();
+    ctx2d.shadowBlur = 0;
+    // playhead tip diamonds
+    ctx2d.fillStyle = "#fff";
+    ctx2d.beginPath();
+    ctx2d.moveTo(playX, panelTop);
+    ctx2d.lineTo(playX - 3 * dpr, panelTop + 5 * dpr);
+    ctx2d.lineTo(playX + 3 * dpr, panelTop + 5 * dpr);
+    ctx2d.closePath();
+    ctx2d.fill();
   }
 
   function drawIdle() {
@@ -698,6 +891,7 @@
     if (!running || !analyser) return;
 
     analyser.getByteFrequencyData(freqData);
+    if (timeData) analyser.getByteTimeDomainData(timeData);
 
     const w = els.canvas.width;
     const h = els.canvas.height;
@@ -778,20 +972,23 @@
     // Layer 1: beat wave pulses
     drawPulses(w, h, now);
 
-    // Layer 2: live waveform ribbon through the pulse center
-    drawWaveformRibbon(w, h, Math.max(energy, kick * 0.8));
+    // Serato spectral waveform panel (lower-middle band)
+    sampleAndPushWave(kick, bass, energy, sens, now);
+    drawSeratoWavePanel(w, h);
 
-    // Layer 3: spectrum bars (punch slightly with live kick)
+    // Spectrum bars along the bottom (shorter so panel stays readable)
     const punch = 1 + kick * 0.35 + ambientGlow * 0.2;
+    const specUsable = usable * 0.38;
+    const specBase = h - padY;
     for (let i = 0; i < BAR_COUNT; i++) {
       const level = Math.min(1, smoothed[i] * punch);
-      const barH = Math.max(usable * 0.025, level * usable);
+      const barH = Math.max(specUsable * 0.04, level * specUsable);
       const x = padX + i * (barW + gap);
-      const y = baseY - barH;
+      const y = specBase - barH;
       const t = i / (BAR_COUNT - 1);
       const [r, g, b] = lerpColor(CYAN, ORANGE, t);
 
-      const grad = ctx2d.createLinearGradient(x, y, x, baseY);
+      const grad = ctx2d.createLinearGradient(x, y, x, specBase);
       grad.addColorStop(0, `rgba(${r},${g},${b},1)`);
       grad.addColorStop(0.45, `rgba(${r},${g},${b},0.85)`);
       grad.addColorStop(1, `rgba(${r},${g},${b},0.2)`);
@@ -801,20 +998,6 @@
       ctx2d.fillStyle = `rgba(255,255,255,${0.35 + level * 0.45})`;
       ctx2d.fillRect(x, y, barW, Math.max(1.5 * dpr, barH * 0.04));
     }
-
-    // Subtle mirrored reflection of bar region only (avoid full-canvas copy glitches)
-    ctx2d.save();
-    ctx2d.globalAlpha = 0.16;
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const level = smoothed[i];
-      const barH = Math.max(usable * 0.015, level * usable * 0.22);
-      const x = padX + i * (barW + gap);
-      const t = i / (BAR_COUNT - 1);
-      const [r, g, b] = lerpColor(CYAN, ORANGE, t);
-      ctx2d.fillStyle = `rgba(${r},${g},${b},0.7)`;
-      ctx2d.fillRect(x, baseY + 4 * dpr, barW, barH);
-    }
-    ctx2d.restore();
 
     // FLX4 channel meters + Serato edge strips
     let lvl1 = 0;
@@ -956,6 +1139,14 @@
       smoothed.fill(0);
       meterCh1 = meterCh2 = peakCh1 = peakCh2 = 0;
       peakHoldT1 = peakHoldT2 = 0;
+      waveWrite = 0;
+      waveFilled = 0;
+      prevWaveAmp = 0;
+      waveBarCounter = 7;
+      lastWaveBarMs = 0;
+      for (let i = 0; i < WAVE_COLS; i++) {
+        waveHist[i] = { amp: 0, bass: 0, mid: 0, high: 0, onset: 0 };
+      }
       initMeters();
       bassHistory = [];
       bassAvg = 0.04;
@@ -1116,7 +1307,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=4").catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=5").catch(() => {});
     });
   }
 

@@ -521,7 +521,7 @@ html, body {
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -48%);
+  transform: translate(-50%, -62%);
   z-index: 3;
   display: flex;
   align-items: stretch;
@@ -590,7 +590,7 @@ html, body {
   justify-content: flex-start;
   gap: 2px;
   width: 12px;
-  height: min(42vh, 220px);
+  height: min(32vh, 160px);
   padding: 4px 3px;
   border-radius: 3px;
   background: linear-gradient(180deg, #060708 0%, #0c0e12 100%);
@@ -644,7 +644,7 @@ html, body {
 
 @media (orientation: landscape) and (max-height: 500px) {
   .flx-well {
-    height: min(58vh, 160px);
+    height: min(42vh, 120px);
     width: 10px;
   }
   .flx-meters {
