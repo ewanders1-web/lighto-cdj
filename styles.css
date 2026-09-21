@@ -514,3 +514,157 @@ html, body {
   .bpm-value { font-size: 0.95rem; }
   .chassis.party .display { border-radius: 4px; }
 }
+
+
+/* —— DDJ-FLX4 channel LED meters (amber + red clip) —— */
+.flx-meters {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -48%);
+  z-index: 3;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  pointer-events: none;
+  opacity: 0.96;
+}
+
+.flx-ch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+
+.flx-ch[data-ch="1"] {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.flx-ch[data-ch="2"] {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.flx-label {
+  position: absolute;
+  bottom: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.55rem;
+  letter-spacing: 0.16em;
+  font-weight: 700;
+  color: #8a949e;
+}
+
+.flx-scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-size: 0.42rem;
+  letter-spacing: 0.04em;
+  color: #5a6570;
+  font-weight: 600;
+  line-height: 1;
+  min-width: 22px;
+  text-align: right;
+}
+
+.flx-scale-r {
+  text-align: left;
+}
+
+.flx-scale span:first-child {
+  color: #a04040;
+  font-size: 0.38rem;
+}
+
+.flx-well {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  gap: 2px;
+  width: 12px;
+  height: min(42vh, 220px);
+  padding: 4px 3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #060708 0%, #0c0e12 100%);
+  border: 1px solid #1a1e24;
+  box-shadow:
+    inset 0 0 8px rgba(0,0,0,0.95),
+    inset 0 1px 0 rgba(255,255,255,0.04),
+    0 0 0 1px rgba(0,0,0,0.5);
+}
+
+.flx-led {
+  flex: 1;
+  min-height: 0;
+  border-radius: 1px;
+  background: #15181c;
+  opacity: 0.55;
+  transition: background 40ms linear, box-shadow 40ms linear, opacity 40ms linear;
+}
+
+.flx-led.on {
+  opacity: 1;
+}
+
+/* Amber / orange main stack (FLX4 hardware look) */
+.flx-led.amber.on {
+  background: #ff9a1a;
+  box-shadow: 0 0 6px rgba(255, 154, 26, 0.85), 0 0 12px rgba(255, 106, 0, 0.45);
+}
+
+.flx-led.amber-hot.on {
+  background: #ff6a00;
+  box-shadow: 0 0 7px rgba(255, 106, 0, 0.95), 0 0 14px rgba(255, 72, 0, 0.5);
+}
+
+/* Single red CLIP tip */
+.flx-led.clip.on {
+  background: #ff1a1a;
+  box-shadow: 0 0 8px rgba(255, 40, 40, 1), 0 0 16px rgba(255, 0, 0, 0.65);
+}
+
+.flx-led.peak-hold:not(.on) {
+  opacity: 0.95;
+  background: #ffb040;
+  box-shadow: 0 0 4px rgba(255, 176, 64, 0.7);
+}
+
+.flx-led.peak-hold.clip:not(.on) {
+  background: #ff3030;
+  box-shadow: 0 0 5px rgba(255, 48, 48, 0.8);
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .flx-well {
+    height: min(58vh, 160px);
+    width: 10px;
+  }
+  .flx-meters {
+    gap: 8px;
+  }
+  .flx-scale {
+    font-size: 0.36rem;
+    min-width: 18px;
+  }
+  .flx-label {
+    bottom: -14px;
+  }
+}
+
+@media (max-width: 360px) {
+  .flx-scale { display: none; }
+  .flx-well { width: 11px; }
+}
+
+.display:has(.overlay:not([hidden])) .flx-meters,
+.display:has(.denied:not([hidden])) .flx-meters {
+  opacity: 0.25;
+}

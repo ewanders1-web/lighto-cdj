@@ -1,6 +1,6 @@
 # Lighto
 
-Pioneer CDJ–style spectrum light visualizer for iPhone Safari. Uses the device microphone, analyzes live audio, and draws cyan/orange frequency bars, a beat-synced wave pulse, heavy 808 kick boom, jog-platter glow, and a live BPM readout.
+Pioneer CDJ–style spectrum light visualizer for iPhone Safari. Uses the device microphone, analyzes live audio, and draws cyan/orange frequency bars, a beat-synced wave pulse, heavy 808 kick boom, jog-platter glow, live BPM, and DDJ-FLX4-style amber channel LED meters.
 
 ## One-command local preview
 
@@ -52,6 +52,7 @@ Open the `https://…` tunnel URL in iPhone Safari.
 | **Party** | Hide chrome for max display (or auto-hides after ~3.5s while listening). Tap the display to bring controls back |
 | **Sens** | Sensitivity |
 | **BPM** | Live tempo estimate from kick/beat gaps (`--.-` until confident) |
+| **CH1 / CH2 meters** | FLX4-style amber LED stacks with red CLIP tip + peak hold |
 
 ## Tech
 

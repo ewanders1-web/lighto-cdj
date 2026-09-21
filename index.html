@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <title>Lighto</title>
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
   <div class="chassis" id="app">
@@ -32,6 +32,25 @@
 
     <main class="display" id="display">
       <canvas id="viz" aria-label="Spectrum visualizer"></canvas>
+
+      <!-- FLX4-style dual channel LED meters (amber + red clip) -->
+      <div class="flx-meters" id="flxMeters" aria-hidden="true">
+        <div class="flx-ch" data-ch="1">
+          <div class="flx-scale" aria-hidden="true">
+            <span>CLIP</span><span>6</span><span>3</span><span>0</span><span>-3</span><span>-7</span><span>-15</span><span>-24</span>
+          </div>
+          <div class="flx-well" id="ch1Well"></div>
+          <span class="flx-label">CH1</span>
+        </div>
+        <div class="flx-ch" data-ch="2">
+          <div class="flx-well" id="ch2Well"></div>
+          <div class="flx-scale flx-scale-r" aria-hidden="true">
+            <span>CLIP</span><span>6</span><span>3</span><span>0</span><span>-3</span><span>-7</span><span>-15</span><span>-24</span>
+          </div>
+          <span class="flx-label">CH2</span>
+        </div>
+      </div>
+
       <div class="bpm-corner chrome-soft" id="bpmCorner" aria-hidden="true">
         <span class="bpm-label">BPM</span>
         <span class="bpm-value" id="bpmCornerValue">--.-</span>
@@ -56,15 +75,8 @@
           <input type="range" id="sensitivity" min="0.4" max="2.5" step="0.05" value="1.7" />
         </label>
       </div>
-      <div class="vu-wrap" aria-hidden="true">
-        <div class="vu-label">PEAK</div>
-        <div class="vu-meter">
-          <div class="vu-fill" id="vuFill"></div>
-          <div class="vu-peak" id="vuPeak"></div>
-        </div>
-      </div>
     </footer>
   </div>
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

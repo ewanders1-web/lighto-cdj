@@ -24,11 +24,15 @@
     sensitivity: document.getElementById("sensitivity"),
     status: document.getElementById("status"),
     display: document.getElementById("display"),
-    vuFill: document.getElementById("vuFill"),
-    vuPeak: document.getElementById("vuPeak"),
+    flxMeters: document.getElementById("flxMeters"),
+    ch1Well: document.getElementById("ch1Well"),
+    ch2Well: document.getElementById("ch2Well"),
     bpmValue: document.getElementById("bpmValue"),
     bpmCornerValue: document.getElementById("bpmCornerValue"),
   };
+
+  const LED_COUNT = 12;
+  const AMBER_HOT_FROM = 9;
 
   const ctx2d = els.canvas.getContext("2d", { alpha: false });
 
@@ -70,6 +74,23 @@
   let partyMode = false;
   let partyTimer = 0;
   const PARTY_HIDE_MS = 3500;
+
+  let ch1Leds = [];
+  let ch2Leds = [];
+  let meterCh1 = 0;
+  let meterCh2 = 0;
+  let peakCh1 = 0;
+  let peakCh2 = 0;
+  let peakHoldT1 = 0;
+  let peakHoldT2 = 0;
+  let stereoMode = false;
+  let splitter = null;
+  let analyserL = null;
+  let analyserR = null;
+  let freqL = null;
+  let freqR = null;
+  let timeL = null;
+  let timeR = null;
 
   function setStatus(text, mode) {
     els.status.textContent = text;
@@ -153,6 +174,107 @@
   function revealChrome() {
     if (partyMode) setParty(false);
     schedulePartyHide();
+  }
+
+  function buildLedWell(well) {
+    if (!well) return [];
+    well.innerHTML = "";
+    const leds = [];
+    for (let i = 0; i < LED_COUNT; i++) {
+      const el = document.createElement("div");
+      el.className = "flx-led";
+      if (i === LED_COUNT - 1) el.classList.add("clip");
+      else if (i >= AMBER_HOT_FROM) el.classList.add("amber-hot");
+      else el.classList.add("amber");
+      well.appendChild(el);
+      leds.push(el);
+    }
+    return leds;
+  }
+
+  function initMeters() {
+    ch1Leds = buildLedWell(els.ch1Well);
+    ch2Leds = buildLedWell(els.ch2Well);
+  }
+
+  function rmsFromTime(buf) {
+    if (!buf || !buf.length) return 0;
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = (buf[i] - 128) / 128;
+      sum += v * v;
+    }
+    return Math.sqrt(sum / buf.length);
+  }
+
+  function updateLedStack(leds, level, peak) {
+    const lit = Math.round(Math.min(1, Math.max(0, level)) * LED_COUNT);
+    const peakIdx = Math.min(LED_COUNT - 1, Math.max(0, Math.round(peak * LED_COUNT) - 1));
+    for (let i = 0; i < leds.length; i++) {
+      const on = i < lit;
+      leds[i].classList.toggle("on", on);
+      const isPeak = !on && i === peakIdx && peak > 0.04;
+      leds[i].classList.toggle("peak-hold", isPeak);
+    }
+  }
+
+  function updateChannelMeters(level1, level2, now) {
+    meterCh1 = level1 > meterCh1 ? meterCh1 * 0.25 + level1 * 0.75 : meterCh1 * 0.82 + level1 * 0.18;
+    meterCh2 = level2 > meterCh2 ? meterCh2 * 0.25 + level2 * 0.75 : meterCh2 * 0.82 + level2 * 0.18;
+
+    if (meterCh1 >= peakCh1) {
+      peakCh1 = meterCh1;
+      peakHoldT1 = now;
+    } else if (now - peakHoldT1 > 450) {
+      peakCh1 = Math.max(meterCh1, peakCh1 - 0.012);
+    }
+
+    if (meterCh2 >= peakCh2) {
+      peakCh2 = meterCh2;
+      peakHoldT2 = now;
+    } else if (now - peakHoldT2 > 450) {
+      peakCh2 = Math.max(meterCh2, peakCh2 - 0.012);
+    }
+
+    updateLedStack(ch1Leds, meterCh1, peakCh1);
+    updateLedStack(ch2Leds, meterCh2, peakCh2);
+  }
+
+  function drawSeratoEdgeMeters(w, h, l, r) {
+    const stripW = Math.max(4 * dpr, w * 0.012);
+    const pad = h * 0.08;
+    const usable = h - pad * 2;
+    const segs = 16;
+    const gap = 1.5 * dpr;
+    const segH = (usable - gap * (segs - 1)) / segs;
+
+    function colorFor(i) {
+      const t = i / (segs - 1);
+      if (t < 0.55) return [40, 220, 80];
+      if (t < 0.82) return [255, 200, 40];
+      return [255, 40, 40];
+    }
+
+    function drawStrip(x, level) {
+      const lit = Math.round(Math.min(1, level) * segs);
+      for (let i = 0; i < segs; i++) {
+        const y = h - pad - (i + 1) * segH - i * gap;
+        const [cr, cg, cb] = colorFor(i);
+        if (i < lit) {
+          ctx2d.fillStyle = `rgba(${cr},${cg},${cb},0.85)`;
+          ctx2d.shadowColor = `rgba(${cr},${cg},${cb},0.55)`;
+          ctx2d.shadowBlur = 4 * dpr;
+        } else {
+          ctx2d.fillStyle = "rgba(20,24,28,0.55)";
+          ctx2d.shadowBlur = 0;
+        }
+        ctx2d.fillRect(x, y, stripW, segH);
+      }
+      ctx2d.shadowBlur = 0;
+    }
+
+    drawStrip(w * 0.015, l);
+    drawStrip(w - w * 0.015 - stripW, r);
   }
 
   function spawnPulse(strength, now) {
@@ -694,18 +816,45 @@
     }
     ctx2d.restore();
 
-    // VU / peak
-    const peak = Math.min(1, Math.max(energy * 1.35, bass * 1.15, kick * 1.25));
-    peakHold = Math.max(peak, peakHold - 0.012);
-    peakDecay = peakHold;
-    els.vuFill.style.width = `${(peak * 100).toFixed(1)}%`;
-    els.vuPeak.style.left = `calc(${(peakDecay * 100).toFixed(1)}% - 1px)`;
+    // FLX4 channel meters + Serato edge strips
+    let lvl1 = 0;
+    let lvl2 = 0;
+    if (stereoMode && analyserL && analyserR && timeL && timeR) {
+      analyserL.getByteTimeDomainData(timeL);
+      analyserR.getByteTimeDomainData(timeR);
+      analyserL.getByteFrequencyData(freqL);
+      analyserR.getByteFrequencyData(freqR);
+      const rmsL = rmsFromTime(timeL);
+      const rmsR = rmsFromTime(timeR);
+      let lowL = 0, lowR = 0, n = 0;
+      const hi = Math.min(12, freqL.length);
+      for (let j = 1; j < hi; j++) {
+        lowL += freqL[j];
+        lowR += freqR[j];
+        n++;
+      }
+      lowL = (lowL / Math.max(1, n)) / 255;
+      lowR = (lowR / Math.max(1, n)) / 255;
+      lvl1 = Math.min(1, (rmsL * 2.8 + lowL * 0.9) * sens * 0.85);
+      lvl2 = Math.min(1, (rmsR * 2.8 + lowR * 0.9) * sens * 0.85);
+    } else {
+      const tRms = rmsFromTime(timeData);
+      lvl1 = Math.min(1, (tRms * 2.6 + energy * 0.7) * sens * 0.9);
+      lvl2 = Math.min(1, (tRms * 2.2 + kick * 1.05 + bass * 0.45) * sens * 0.9);
+      const wobble = 0.045 * Math.sin(now * 0.008);
+      lvl1 = Math.min(1, Math.max(0, lvl1 + wobble));
+      lvl2 = Math.min(1, Math.max(0, lvl2 - wobble));
+    }
 
-    // Status: prove mic is open + show level
+    updateChannelMeters(lvl1, lvl2, now);
+    drawSeratoEdgeMeters(w, h, meterCh1, meterCh2);
+
+    const peak = Math.min(1, Math.max(energy * 1.35, bass * 1.15, kick * 1.25, meterCh1, meterCh2));
+    peakHold = Math.max(peak, peakHold - 0.012);
+
     statusTick++;
     if (statusTick % 8 === 0) {
-      const lvl = Math.round(peak * 100);
-      setStatus(`LIVE · ${lvl}%`, "live");
+      setStatus(`LIVE · ${Math.round(peak * 100)}%`, "live");
     }
 
     rafId = requestAnimationFrame(drawFrame);
@@ -717,7 +866,7 @@
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
-        channelCount: 1,
+        channelCount: { ideal: 2 },
       },
       video: false,
     };
@@ -770,9 +919,44 @@
       sourceNode = audioCtx.createMediaStreamSource(mediaStream);
       sourceNode.connect(analyser);
 
+      // Optional stereo split for true CH1/CH2 meters
+      stereoMode = false;
+      splitter = null;
+      analyserL = analyserR = null;
+      freqL = freqR = timeL = timeR = null;
+      try {
+        const tracks = mediaStream.getAudioTracks();
+        const settings = tracks[0] && tracks[0].getSettings ? tracks[0].getSettings() : {};
+        const chans = settings.channelCount || 1;
+        if (chans >= 2) {
+          splitter = audioCtx.createChannelSplitter(2);
+          sourceNode.connect(splitter);
+          analyserL = audioCtx.createAnalyser();
+          analyserR = audioCtx.createAnalyser();
+          [analyserL, analyserR].forEach((a) => {
+            a.fftSize = 2048;
+            a.smoothingTimeConstant = 0.3;
+            a.minDecibels = -95;
+            a.maxDecibels = -25;
+          });
+          splitter.connect(analyserL, 0);
+          splitter.connect(analyserR, 1);
+          freqL = new Uint8Array(analyserL.frequencyBinCount);
+          freqR = new Uint8Array(analyserR.frequencyBinCount);
+          timeL = new Uint8Array(analyserL.fftSize);
+          timeR = new Uint8Array(analyserR.fftSize);
+          stereoMode = true;
+        }
+      } catch (_) {
+        stereoMode = false;
+      }
+
       freqData = new Uint8Array(analyser.frequencyBinCount);
       timeData = new Uint8Array(analyser.fftSize);
       smoothed.fill(0);
+      meterCh1 = meterCh2 = peakCh1 = peakCh2 = 0;
+      peakHoldT1 = peakHoldT2 = 0;
+      initMeters();
       bassHistory = [];
       bassAvg = 0.04;
       kickHistory = [];
@@ -852,9 +1036,16 @@
     els.toggleBtn.textContent = "Stop";
     els.toggleBtn.classList.remove("running");
     els.toggleBtn.disabled = true;
-    els.vuFill.style.width = "0%";
-    els.vuPeak.style.left = "0%";
     peakHold = 0;
+    meterCh1 = meterCh2 = peakCh1 = peakCh2 = 0;
+    updateLedStack(ch1Leds, 0, 0);
+    updateLedStack(ch2Leds, 0, 0);
+    if (splitter) {
+      try { splitter.disconnect(); } catch (_) {}
+      splitter = null;
+    }
+    analyserL = analyserR = null;
+    stereoMode = false;
 
     clearTimeout(partyTimer);
     partyTimer = 0;
@@ -925,10 +1116,11 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=3").catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=4").catch(() => {});
     });
   }
 
+  initMeters();
   resize();
   drawIdle();
   setBpmText("--.-");
