@@ -1,11 +1,7 @@
 (() => {
   "use strict";
 
-  const CYAN = [0, 229, 255];
-  const ORANGE = [255, 106, 0];
-  // Deep TR-808 kick heat (still in CDJ orange family)
-  const BOOM = [255, 72, 0];
-  const BOOM_CORE = [255, 140, 40];
+  const THEME_KEY = "lighto-theme";
   const BAR_COUNT = 48;
   const MAX_PULSES = 6;
   const PULSE_LIFE_MS = 720;
@@ -21,6 +17,9 @@
     toggleBtn: document.getElementById("toggleBtn"),
     partyBtn: document.getElementById("partyBtn"),
     partyHint: document.getElementById("partyHint"),
+    colorsBtn: document.getElementById("colorsBtn"),
+    themeSheet: document.getElementById("themeSheet"),
+    themeChips: document.getElementById("themeChips"),
     sensitivity: document.getElementById("sensitivity"),
     status: document.getElementById("status"),
     display: document.getElementById("display"),
@@ -33,6 +32,259 @@
 
   const LED_COUNT = 12;
   const AMBER_HOT_FROM = 9;
+
+  // Visual themes: CSS accents + spectral coeffs canvas reads each frame
+  const THEMES = {
+    serato: {
+      id: "serato",
+      name: "Serato",
+      swatches: ["#ff3b1a", "#1aff9c", "#ff80ff"],
+      css: { cyan: "#00e5ff", cyanDim: "#0088a0", orange: "#ff6a00", orangeDim: "#a04000" },
+      cyan: [0, 229, 255],
+      orange: [255, 106, 0],
+      boom: [255, 72, 0],
+      boomCore: [255, 140, 40],
+      spectral: {
+        bass: [255, 60, 10],
+        mid: [20, 255, 200],
+        high: [220, 120, 255],
+        highAdd: [80, 0, 0],
+        midAdd: [0, 40, 0],
+      },
+      bassBody: { r0: 40, rS: 215, g0: 20, gBass: 90, gMid: 40, b: 20 },
+      highTip: { r0: 200, rS: 55, g0: 180, gS: 40, b0: 220, bS: 35 },
+      highEdge: [255, 80, 255],
+      midRibbon: { r0: 30, rS: 100, g0: 160, gS: 95, b: 220 },
+      overview: {
+        br0: 30, brBass: 200, brAmp: 40,
+        bg0: 40, bgMid: 180, bgAmp: 50,
+        bb0: 90, bbHigh: 165, bbAmp: 50,
+      },
+    },
+    classic: {
+      id: "classic",
+      name: "Classic CDJ",
+      swatches: ["#00e5ff", "#ff6a00", "#0088a0"],
+      css: { cyan: "#00e5ff", cyanDim: "#0088a0", orange: "#ff6a00", orangeDim: "#a04000" },
+      cyan: [0, 229, 255],
+      orange: [255, 106, 0],
+      boom: [255, 72, 0],
+      boomCore: [255, 140, 40],
+      spectral: {
+        bass: [255, 100, 0],
+        mid: [0, 200, 220],
+        high: [180, 240, 255],
+        highAdd: [40, 20, 0],
+        midAdd: [0, 20, 30],
+      },
+      bassBody: { r0: 40, rS: 200, g0: 20, gBass: 70, gMid: 30, b: 5 },
+      highTip: { r0: 180, rS: 40, g0: 220, gS: 35, b0: 240, bS: 15 },
+      highEdge: [0, 229, 255],
+      midRibbon: { r0: 0, rS: 40, g0: 180, gS: 50, b: 230 },
+      overview: {
+        br0: 40, brBass: 200, brAmp: 40,
+        bg0: 50, bgMid: 100, bgAmp: 40,
+        bb0: 80, bbHigh: 150, bbAmp: 50,
+      },
+    },
+    neon: {
+      id: "neon",
+      name: "Neon",
+      swatches: ["#ff00aa", "#00fff0", "#b8ff00"],
+      css: { cyan: "#00fff0", cyanDim: "#00a090", orange: "#ff00aa", orangeDim: "#a00060" },
+      cyan: [0, 255, 240],
+      orange: [255, 0, 170],
+      boom: [255, 0, 120],
+      boomCore: [255, 80, 200],
+      spectral: {
+        bass: [255, 0, 160],
+        mid: [0, 255, 200],
+        high: [180, 255, 0],
+        highAdd: [60, 40, 0],
+        midAdd: [0, 40, 20],
+      },
+      bassBody: { r0: 50, rS: 205, g0: 0, gBass: 40, gMid: 80, b: 80 },
+      highTip: { r0: 160, rS: 60, g0: 220, gS: 35, b0: 40, bS: 20 },
+      highEdge: [200, 255, 0],
+      midRibbon: { r0: 200, rS: 55, g0: 40, gS: 80, b: 220 },
+      overview: {
+        br0: 40, brBass: 180, brAmp: 40,
+        bg0: 20, bgMid: 200, bgAmp: 40,
+        bb0: 60, bbHigh: 120, bbAmp: 50,
+      },
+    },
+    ice: {
+      id: "ice",
+      name: "Ice",
+      swatches: ["#7ec8ff", "#ffffff", "#00d4ff"],
+      css: { cyan: "#00d4ff", cyanDim: "#007a99", orange: "#7ec8ff", orangeDim: "#3a6a90" },
+      cyan: [0, 212, 255],
+      orange: [126, 200, 255],
+      boom: [40, 140, 255],
+      boomCore: [160, 220, 255],
+      spectral: {
+        bass: [40, 100, 255],
+        mid: [100, 220, 255],
+        high: [240, 250, 255],
+        highAdd: [20, 20, 30],
+        midAdd: [0, 30, 40],
+      },
+      bassBody: { r0: 10, rS: 50, g0: 40, gBass: 80, gMid: 60, b: 180 },
+      highTip: { r0: 220, rS: 35, g0: 235, gS: 20, b0: 255, bS: 0 },
+      highEdge: [200, 240, 255],
+      midRibbon: { r0: 40, rS: 60, g0: 180, gS: 50, b: 255 },
+      overview: {
+        br0: 20, brBass: 60, brAmp: 30,
+        bg0: 60, bgMid: 140, bgAmp: 40,
+        bb0: 120, bbHigh: 135, bbAmp: 40,
+      },
+    },
+    fire: {
+      id: "fire",
+      name: "Fire",
+      swatches: ["#8b0000", "#ff8c00", "#ffd700"],
+      css: { cyan: "#ffb020", cyanDim: "#a06010", orange: "#ff3b00", orangeDim: "#8b1500" },
+      cyan: [255, 176, 32],
+      orange: [255, 59, 0],
+      boom: [200, 30, 0],
+      boomCore: [255, 120, 20],
+      spectral: {
+        bass: [180, 20, 0],
+        mid: [255, 120, 0],
+        high: [255, 220, 60],
+        highAdd: [40, 20, 0],
+        midAdd: [30, 20, 0],
+      },
+      bassBody: { r0: 60, rS: 180, g0: 10, gBass: 40, gMid: 50, b: 5 },
+      highTip: { r0: 255, rS: 0, g0: 200, gS: 55, b0: 40, bS: 40 },
+      highEdge: [255, 220, 80],
+      midRibbon: { r0: 200, rS: 55, g0: 80, gS: 100, b: 20 },
+      overview: {
+        br0: 50, brBass: 200, brAmp: 40,
+        bg0: 30, bgMid: 120, bgAmp: 50,
+        bb0: 10, bbHigh: 40, bbAmp: 20,
+      },
+    },
+    mono: {
+      id: "mono",
+      name: "Mono",
+      swatches: ["#ffffff", "#888888", "#333333"],
+      css: { cyan: "#d0d4d8", cyanDim: "#6a7078", orange: "#a8adb4", orangeDim: "#50555c" },
+      cyan: [208, 212, 216],
+      orange: [168, 173, 180],
+      boom: [180, 180, 180],
+      boomCore: [240, 240, 240],
+      spectral: {
+        bass: [120, 120, 120],
+        mid: [200, 200, 200],
+        high: [255, 255, 255],
+        highAdd: [20, 20, 20],
+        midAdd: [10, 10, 10],
+      },
+      bassBody: { r0: 40, rS: 100, g0: 40, gBass: 100, gMid: 40, b: 40 },
+      highTip: { r0: 220, rS: 35, g0: 220, gS: 35, b0: 220, bS: 35 },
+      highEdge: [255, 255, 255],
+      midRibbon: { r0: 160, rS: 80, g0: 160, gS: 80, b: 160 },
+      overview: {
+        br0: 50, brBass: 120, brAmp: 40,
+        bg0: 50, bgMid: 120, bgAmp: 40,
+        bb0: 50, bbHigh: 120, bbAmp: 40,
+      },
+    },
+  };
+
+  // Live accents — canvas code reads these each frame (no reload)
+  let currentTheme = THEMES.serato;
+  let CYAN = currentTheme.cyan;
+  let ORANGE = currentTheme.orange;
+  let BOOM = currentTheme.boom;
+  let BOOM_CORE = currentTheme.boomCore;
+  let themeSheetOpen = false;
+
+  function rgbaOf(c, a) {
+    return `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+  }
+
+  function applyTheme(id, persist) {
+    const theme = THEMES[id] || THEMES.serato;
+    currentTheme = theme;
+    CYAN = theme.cyan;
+    ORANGE = theme.orange;
+    BOOM = theme.boom;
+    BOOM_CORE = theme.boomCore;
+
+    const root = document.documentElement;
+    root.style.setProperty("--cyan", theme.css.cyan);
+    root.style.setProperty("--cyan-dim", theme.css.cyanDim);
+    root.style.setProperty("--orange", theme.css.orange);
+    root.style.setProperty("--orange-dim", theme.css.orangeDim);
+    root.style.setProperty("--cyan-rgb", `${theme.cyan[0]}, ${theme.cyan[1]}, ${theme.cyan[2]}`);
+    root.style.setProperty("--orange-rgb", `${theme.orange[0]}, ${theme.orange[1]}, ${theme.orange[2]}`);
+
+    if (persist !== false) {
+      try { localStorage.setItem(THEME_KEY, theme.id); } catch (_) {}
+    }
+    syncThemeChips();
+    if (!running) drawIdle();
+  }
+
+  function syncThemeChips() {
+    if (!els.themeChips) return;
+    const chips = els.themeChips.querySelectorAll(".theme-chip");
+    chips.forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.theme === currentTheme.id);
+      btn.setAttribute("aria-selected", btn.dataset.theme === currentTheme.id ? "true" : "false");
+    });
+  }
+
+  function buildThemeChips() {
+    if (!els.themeChips) return;
+    els.themeChips.innerHTML = "";
+    Object.values(THEMES).forEach((theme) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "theme-chip";
+      btn.dataset.theme = theme.id;
+      btn.setAttribute("role", "option");
+      btn.setAttribute("aria-label", theme.name);
+      const sw = document.createElement("span");
+      sw.className = "theme-swatch";
+      sw.setAttribute("aria-hidden", "true");
+      theme.swatches.forEach((hex) => {
+        const i = document.createElement("i");
+        i.style.background = hex;
+        sw.appendChild(i);
+      });
+      const label = document.createElement("span");
+      label.textContent = theme.name;
+      btn.appendChild(sw);
+      btn.appendChild(label);
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        applyTheme(theme.id, true);
+      });
+      els.themeChips.appendChild(btn);
+    });
+    syncThemeChips();
+  }
+
+  function setThemeSheet(open) {
+    themeSheetOpen = !!open;
+    if (els.themeSheet) els.themeSheet.hidden = !themeSheetOpen;
+    if (els.colorsBtn) {
+      els.colorsBtn.classList.toggle("open", themeSheetOpen);
+      els.colorsBtn.setAttribute("aria-expanded", themeSheetOpen ? "true" : "false");
+    }
+  }
+
+  function restoreTheme() {
+    let id = "serato";
+    try {
+      const saved = localStorage.getItem(THEME_KEY);
+      if (saved && THEMES[saved]) id = saved;
+    } catch (_) {}
+    applyTheme(id, false);
+  }
 
   const ctx2d = els.canvas.getContext("2d", { alpha: false });
 
@@ -169,6 +421,7 @@
     if (partyMode) {
       clearTimeout(partyTimer);
       partyTimer = 0;
+      setThemeSheet(false);
     } else {
       schedulePartyHide();
     }
@@ -407,8 +660,8 @@
     const cy = h * 0.5;
     const r = Math.min(w, h) * (0.22 + ambientGlow * 0.28);
     const g = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, r);
-    g.addColorStop(0, `rgba(0,229,255,${0.14 * ambientGlow})`);
-    g.addColorStop(0.45, `rgba(255,106,0,${0.1 * ambientGlow})`);
+    g.addColorStop(0, rgbaOf(CYAN, 0.14 * ambientGlow));
+    g.addColorStop(0.45, rgbaOf(ORANGE, 0.1 * ambientGlow));
     g.addColorStop(1, "rgba(0,0,0,0)");
     ctx2d.fillStyle = g;
     ctx2d.fillRect(0, 0, w, h);
@@ -426,13 +679,13 @@
 
     ctx2d.beginPath();
     ctx2d.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx2d.strokeStyle = `rgba(0,229,255,${0.22 + ambientGlow * 0.35 + jogPulse * 0.4})`;
+    ctx2d.strokeStyle = rgbaOf(CYAN, 0.22 + ambientGlow * 0.35 + jogPulse * 0.4);
     ctx2d.lineWidth = Math.max(2 * dpr, (3.5 + jogPulse * 4) * dpr);
     ctx2d.stroke();
 
     ctx2d.beginPath();
     ctx2d.arc(cx, cy, r * 0.78, 0, Math.PI * 2);
-    ctx2d.strokeStyle = `rgba(255,106,0,${0.16 + kick * 0.35 + jogPulse * 0.35})`;
+    ctx2d.strokeStyle = rgbaOf(ORANGE, 0.16 + kick * 0.35 + jogPulse * 0.35);
     ctx2d.lineWidth = Math.max(1.5 * dpr, (2.2 + jogPulse * 3) * dpr);
     ctx2d.stroke();
 
@@ -451,21 +704,21 @@
       ctx2d.moveTo(cos * r0, sin * r0);
       ctx2d.lineTo(cos * r1, sin * r1);
       if (major) {
-        ctx2d.strokeStyle = `rgba(0,229,255,${0.35 + jogPulse * 0.4})`;
+        ctx2d.strokeStyle = rgbaOf(CYAN, 0.35 + jogPulse * 0.4);
         ctx2d.lineWidth = 2 * dpr;
       } else {
-        ctx2d.strokeStyle = `rgba(255,106,0,${0.2 + energy * 0.25})`;
+        ctx2d.strokeStyle = rgbaOf(ORANGE, 0.2 + energy * 0.25);
         ctx2d.lineWidth = 1.2 * dpr;
       }
       ctx2d.stroke();
     }
     ctx2d.beginPath();
     ctx2d.arc(0, 0, r * 0.12, 0, Math.PI * 2);
-    ctx2d.fillStyle = `rgba(0,229,255,${0.15 + jogPulse * 0.45})`;
+    ctx2d.fillStyle = rgbaOf(CYAN, 0.15 + jogPulse * 0.45);
     ctx2d.fill();
     ctx2d.beginPath();
     ctx2d.arc(0, 0, r * 0.06, 0, Math.PI * 2);
-    ctx2d.fillStyle = `rgba(255,106,0,${0.35 + jogPulse * 0.4})`;
+    ctx2d.fillStyle = rgbaOf(ORANGE, 0.35 + jogPulse * 0.4);
     ctx2d.fill();
     ctx2d.restore();
 
@@ -490,8 +743,8 @@
       const bloom = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, rBloom);
       bloom.addColorStop(0, `rgba(${BOOM_CORE[0]},${BOOM_CORE[1]},${BOOM_CORE[2]},${0.55 * boomFlash})`);
       bloom.addColorStop(0.22, `rgba(${BOOM[0]},${BOOM[1]},${BOOM[2]},${0.38 * boomFlash})`);
-      bloom.addColorStop(0.55, `rgba(255,106,0,${0.14 * boomFlash})`);
-      bloom.addColorStop(0.78, `rgba(0,229,255,${0.06 * boomFlash})`);
+      bloom.addColorStop(0.55, rgbaOf(ORANGE, 0.14 * boomFlash));
+      bloom.addColorStop(0.78, rgbaOf(CYAN, 0.06 * boomFlash));
       bloom.addColorStop(1, "rgba(0,0,0,0)");
       ctx2d.fillStyle = bloom;
       ctx2d.fillRect(0, 0, w, h);
@@ -515,10 +768,10 @@
 
       // Fat filled disc (the boom)
       const disc = ctx2d.createRadialGradient(cx, cy, radius * 0.05, cx, cy, radius);
-      disc.addColorStop(0, `rgba(255,200,120,${0.45 * alpha})`);
+      disc.addColorStop(0, rgbaOf(BOOM_CORE, 0.45 * alpha));
       disc.addColorStop(0.18, `rgba(${BOOM_CORE[0]},${BOOM_CORE[1]},${BOOM_CORE[2]},${0.5 * alpha})`);
       disc.addColorStop(0.45, `rgba(${BOOM[0]},${BOOM[1]},${BOOM[2]},${0.32 * alpha})`);
-      disc.addColorStop(0.72, `rgba(255,106,0,${0.12 * alpha})`);
+      disc.addColorStop(0.72, rgbaOf(ORANGE, 0.12 * alpha));
       disc.addColorStop(1, "rgba(0,0,0,0)");
       ctx2d.fillStyle = disc;
       ctx2d.beginPath();
@@ -536,7 +789,7 @@
       // Outer cyan rim (CDJ accent on the thump)
       ctx2d.beginPath();
       ctx2d.arc(cx, cy, ringR * 1.08, 0, Math.PI * 2);
-      ctx2d.strokeStyle = `rgba(0,229,255,${alpha * 0.35})`;
+      ctx2d.strokeStyle = rgbaOf(CYAN, alpha * 0.35);
       ctx2d.lineWidth = Math.max(2 * dpr, 5 * dpr * (1 - age));
       ctx2d.stroke();
 
@@ -545,7 +798,7 @@
       const bandGrad = ctx2d.createLinearGradient(0, cy - bandH, 0, cy + bandH);
       bandGrad.addColorStop(0, "rgba(0,0,0,0)");
       bandGrad.addColorStop(0.4, `rgba(${BOOM[0]},${BOOM[1]},${BOOM[2]},${0.28 * alpha})`);
-      bandGrad.addColorStop(0.5, `rgba(255,180,80,${0.4 * alpha})`);
+      bandGrad.addColorStop(0.5, rgbaOf(BOOM_CORE, 0.4 * alpha));
       bandGrad.addColorStop(0.6, `rgba(${BOOM[0]},${BOOM[1]},${BOOM[2]},${0.28 * alpha})`);
       bandGrad.addColorStop(1, "rgba(0,0,0,0)");
       ctx2d.fillStyle = bandGrad;
@@ -562,8 +815,8 @@
     // Residual center bloom
     if (pulseFlash > 0.01) {
       const bloom = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, maxR * 0.55);
-      bloom.addColorStop(0, `rgba(0,229,255,${0.18 * pulseFlash})`);
-      bloom.addColorStop(0.35, `rgba(255,106,0,${0.1 * pulseFlash})`);
+      bloom.addColorStop(0, rgbaOf(CYAN, 0.18 * pulseFlash));
+      bloom.addColorStop(0.35, rgbaOf(ORANGE, 0.1 * pulseFlash));
       bloom.addColorStop(1, "rgba(0,0,0,0)");
       ctx2d.fillStyle = bloom;
       ctx2d.fillRect(0, 0, w, h);
@@ -626,19 +879,17 @@
   }
 
   function spectralColor(bass, mid, high, amp) {
-    // Club Serato RGB: bass red/orange, mids green/cyan, highs white/magenta
+    const sp = currentTheme.spectral;
     const b = Math.min(1, bass);
     const m = Math.min(1, mid);
     const hi = Math.min(1, high);
     const a = Math.min(1, Math.max(0.15, amp));
-    // Weighted blend of vivid primaries
-    let r = b * 255 + m * 20 + hi * 220;
-    let g = b * 60 + m * 255 + hi * 120;
-    let bl = b * 10 + m * 200 + hi * 255;
-    // Magenta/purple push on bright highs
-    r = Math.min(255, r + hi * 80);
-    g = Math.min(255, g + m * 40);
-    // Floor so quiet columns still show hue, then scale by amp for punch
+    let r = b * sp.bass[0] + m * sp.mid[0] + hi * sp.high[0];
+    let g = b * sp.bass[1] + m * sp.mid[1] + hi * sp.high[1];
+    let bl = b * sp.bass[2] + m * sp.mid[2] + hi * sp.high[2];
+    r = Math.min(255, r + hi * sp.highAdd[0] + m * sp.midAdd[0]);
+    g = Math.min(255, g + hi * sp.highAdd[1] + m * sp.midAdd[1]);
+    bl = Math.min(255, bl + hi * sp.highAdd[2] + m * sp.midAdd[2]);
     const glow = 0.55 + a * 0.7;
     return [
       Math.min(255, Math.round(r * glow)),
@@ -770,43 +1021,48 @@
       // --- Top tier: bold spectral waveform (symmetric) ---
       const midTop = topY + topH * 0.5;
       const half = Math.max(2 * dpr, s.amp * topH * 0.62);
-      // Bass body — thick red/orange core
+      // Bass body — theme bass core
+      const bbod = currentTheme.bassBody;
       const lowHalf = half * (0.5 + s.bass * 0.55);
-      const bassR = Math.min(255, 40 + s.bass * 215);
-      const bassG = Math.min(255, 20 + s.bass * 90 + s.mid * 40);
-      ctx2d.fillStyle = `rgba(${bassR},${bassG},20,0.95)`;
+      const bassR = Math.min(255, bbod.r0 + s.bass * bbod.rS);
+      const bassG = Math.min(255, bbod.g0 + s.bass * bbod.gBass + s.mid * bbod.gMid);
+      ctx2d.fillStyle = `rgba(${bassR},${bassG},${bbod.b},0.95)`;
       ctx2d.fillRect(x, midTop - lowHalf, cw, lowHalf * 2);
-      // Mid layer — green/cyan overlay
+      // Mid layer — spectral overlay
       const midHalf = half * (0.4 + s.mid * 0.55);
       ctx2d.fillStyle = `rgba(${Math.max(0, cr - 30)},${Math.min(255, cg + 50)},${Math.min(255, cb)},0.9)`;
       ctx2d.fillRect(x + cw * 0.12, midTop - midHalf, Math.max(1, cw * 0.76), midHalf * 2);
-      // High tips — hot white / magenta
+      // High tips
+      const htip = currentTheme.highTip;
       const hiHalf = half * (0.4 + s.high * 0.7);
       const tipH = Math.max(2 * dpr, hiHalf * 0.28);
-      ctx2d.fillStyle = `rgba(${Math.min(255, 200 + s.high * 55)},${Math.min(255, 180 + s.high * 40)},${Math.min(255, 220 + s.high * 35)},1)`;
+      ctx2d.fillStyle = `rgba(${Math.min(255, htip.r0 + s.high * htip.rS)},${Math.min(255, htip.g0 + s.high * htip.gS)},${Math.min(255, htip.b0 + s.high * htip.bS)},1)`;
       ctx2d.fillRect(x, midTop - hiHalf, Math.max(1, cw * 0.7), tipH);
       ctx2d.fillRect(x, midTop + hiHalf - tipH, Math.max(1, cw * 0.7), tipH);
       if (s.high > 0.35) {
-        ctx2d.fillStyle = `rgba(255,80,255,${0.4 + s.high * 0.5})`;
+        const he = currentTheme.highEdge;
+        ctx2d.fillStyle = rgbaOf(he, 0.4 + s.high * 0.5);
         ctx2d.fillRect(x, midTop - hiHalf - 1 * dpr, Math.max(1, cw * 0.45), 2 * dpr);
         ctx2d.fillRect(x, midTop + hiHalf - 1 * dpr, Math.max(1, cw * 0.45), 2 * dpr);
       }
 
-      // --- Mid tier: transient ribbon (hot cyan/magenta spikes) ---
+      // --- Mid tier: transient ribbon ---
+      const mr = currentTheme.midRibbon;
       const onsetH = Math.max(2 * dpr, s.onset * midH * 0.98);
-      ctx2d.fillStyle = `rgba(${30 + s.onset * 100},${160 + s.onset * 95},${220},${0.45 + s.onset * 0.55})`;
+      ctx2d.fillStyle = `rgba(${Math.min(255, mr.r0 + s.onset * mr.rS)},${Math.min(255, mr.g0 + s.onset * mr.gS)},${mr.b},${0.45 + s.onset * 0.55})`;
       ctx2d.fillRect(x, midY + midH - onsetH, Math.max(1, cw * 0.9), onsetH);
       if (s.onset > 0.4) {
         ctx2d.fillStyle = `rgba(255,255,255,${s.onset})`;
         ctx2d.fillRect(x, midY + 1, Math.max(1, cw * 0.75), 2.5 * dpr);
       }
 
-      // --- Bottom tier: vivid overview (bass-orange + cyan highs) ---
+      // --- Bottom tier: overview ---
+      const ov = currentTheme.overview;
       const midBot = botY + botH * 0.5;
       const botHalf = Math.max(2 * dpr, s.amp * botH * 0.58);
-      const br = Math.min(255, 30 + s.bass * 200 + s.amp * 40);
-      const bg = Math.min(255, 40 + s.mid * 180 + s.amp * 50);
-      const bb = Math.min(255, 90 + s.high * 165 + s.amp * 50);
+      const br = Math.min(255, ov.br0 + s.bass * ov.brBass + s.amp * ov.brAmp);
+      const bg = Math.min(255, ov.bg0 + s.mid * ov.bgMid + s.amp * ov.bgAmp);
+      const bb = Math.min(255, ov.bb0 + s.high * ov.bbHigh + s.amp * ov.bbAmp);
       ctx2d.fillStyle = `rgba(${br},${bg},${bb},0.95)`;
       ctx2d.fillRect(x, midBot - botHalf, cw, botHalf * 2);
     }
@@ -877,12 +1133,12 @@
     const cy = h * 0.48;
     ctx2d.beginPath();
     ctx2d.arc(cx, cy, Math.min(w, h) * 0.12, 0, Math.PI * 2);
-    ctx2d.strokeStyle = "rgba(0,229,255,0.12)";
+    ctx2d.strokeStyle = rgbaOf(CYAN, 0.12);
     ctx2d.lineWidth = 2 * dpr;
     ctx2d.stroke();
     ctx2d.beginPath();
     ctx2d.arc(cx, cy, Math.min(w, h) * 0.2, 0, Math.PI * 2);
-    ctx2d.strokeStyle = "rgba(255,106,0,0.08)";
+    ctx2d.strokeStyle = rgbaOf(ORANGE, 0.08);
     ctx2d.lineWidth = 1.5 * dpr;
     ctx2d.stroke();
 
@@ -895,7 +1151,7 @@
       ctx2d.fillRect(x, baseY - idleH, barW, idleH);
     }
 
-    ctx2d.strokeStyle = "rgba(0,229,255,0.08)";
+    ctx2d.strokeStyle = rgbaOf(CYAN, 0.08);
     ctx2d.lineWidth = 1 * dpr;
     ctx2d.beginPath();
     ctx2d.moveTo(padX, h * 0.5);
@@ -1294,6 +1550,19 @@
     });
   }
 
+  if (els.colorsBtn) {
+    els.colorsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setThemeSheet(!themeSheetOpen);
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    if (!themeSheetOpen) return;
+    if (e.target.closest("#themeSheet") || e.target.closest("#colorsBtn")) return;
+    setThemeSheet(false);
+  });
+
   els.display.addEventListener("click", (e) => {
     if (!running) return;
     if (e.target.closest(".tap-btn") || e.target.closest(".overlay") || e.target.closest(".denied")) return;
@@ -1323,10 +1592,12 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=6").catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=7").catch(() => {});
     });
   }
 
+  buildThemeChips();
+  restoreTheme();
   initMeters();
   resize();
   drawIdle();

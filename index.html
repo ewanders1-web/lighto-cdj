@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <title>Lighto</title>
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=7" />
 </head>
 <body>
   <div class="chassis" id="app">
@@ -70,13 +70,17 @@
       <div class="control-row">
         <button type="button" class="ctrl-btn" id="toggleBtn" disabled>Stop</button>
         <button type="button" class="ctrl-btn party-btn" id="partyBtn" aria-pressed="false">Party</button>
+        <button type="button" class="ctrl-btn colors-btn" id="colorsBtn" aria-expanded="false" aria-controls="themeSheet">Colors</button>
         <label class="sens">
           <span>Sens</span>
           <input type="range" id="sensitivity" min="0.4" max="2.5" step="0.05" value="1.7" />
         </label>
       </div>
+      <div class="theme-sheet" id="themeSheet" hidden>
+        <div class="theme-chips" id="themeChips" role="listbox" aria-label="Color themes"></div>
+      </div>
     </footer>
   </div>
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>
