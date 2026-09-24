@@ -531,7 +531,7 @@ html, body {
 }
 
 .bpm-corner .bpm-value {
-  font-size: 1.35rem;
+  font-size: 1.05rem;
 }
 
 .party-btn.party-on {
@@ -599,13 +599,13 @@ html, body {
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -78%);
+  transform: translate(-50%, -92%);
   z-index: 3;
   display: flex;
   align-items: stretch;
-  gap: 10px;
+  gap: 8px;
   pointer-events: none;
-  opacity: 0.96;
+  opacity: 0.92;
 }
 
 .flx-ch {
@@ -666,10 +666,10 @@ html, body {
   display: flex;
   flex-direction: column-reverse;
   justify-content: flex-start;
-  gap: 2px;
-  width: 10px;
-  height: min(22vh, 110px);
-  padding: 4px 3px;
+  gap: 1px;
+  width: 8px;
+  height: min(14vh, 70px);
+  padding: 3px 2px;
   border-radius: 3px;
   background: linear-gradient(180deg, #060708 0%, #0c0e12 100%);
   border: 1px solid #1a1e24;
@@ -722,11 +722,11 @@ html, body {
 
 @media (orientation: landscape) and (max-height: 500px) {
   .flx-well {
-    height: min(28vh, 90px);
-    width: 10px;
+    height: min(16vh, 52px);
+    width: 7px;
   }
   .flx-meters {
-    gap: 8px;
+    gap: 6px;
   }
   .flx-scale {
     font-size: 0.36rem;

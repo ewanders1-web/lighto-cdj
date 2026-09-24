@@ -669,8 +669,8 @@
 
   function drawJogPlatter(w, h, energy, kick, now) {
     const cx = w * 0.5;
-    const cy = h * 0.175;
-    const baseR = Math.min(w, h) * 0.14;
+    const cy = h * 0.085;
+    const baseR = Math.min(w, h) * 0.085;
     const spin = (bpmConfident ? bpmDisplay : 120) / 60;
     jogAngle += (0.008 + energy * 0.02 + kick * 0.03) * (0.7 + spin * 0.15);
     jogPulse *= 0.9;
@@ -945,9 +945,9 @@
   }
 
   function drawSeratoWavePanel(w, h) {
-    // Primary visual band — tall Serato stack
-    const panelTop = h * 0.20;
-    const panelH = h * 0.58;
+    // Primary visual band — dominant Serato stack
+    const panelTop = h * 0.11;
+    const panelH = h * 0.72;
     const panelBot = panelTop + panelH;
     const padX = w * 0.03;
     const innerW = w - padX * 2;
@@ -1248,9 +1248,9 @@
     sampleAndPushWave(kick, bass, energy, sens, now);
     drawSeratoWavePanel(w, h);
 
-    // Spectrum bars along the bottom (shorter so panel stays readable)
+    // Spectrum bars along the bottom (thin footer; wave stays dominant)
     const punch = 1 + kick * 0.35 + ambientGlow * 0.2;
-    const specUsable = usable * 0.16;
+    const specUsable = usable * 0.08;
     const specBase = h - padY;
     for (let i = 0; i < BAR_COUNT; i++) {
       const level = Math.min(1, smoothed[i] * punch);
@@ -1592,7 +1592,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=7").catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=8").catch(() => {});
     });
   }
 
