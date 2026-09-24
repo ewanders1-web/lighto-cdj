@@ -26,6 +26,8 @@
     flxMeters: document.getElementById("flxMeters"),
     ch1Well: document.getElementById("ch1Well"),
     ch2Well: document.getElementById("ch2Well"),
+    seratoWellL: document.getElementById("seratoWellL"),
+    seratoWellR: document.getElementById("seratoWellR"),
     bpmValue: document.getElementById("bpmValue"),
     bpmCornerValue: document.getElementById("bpmCornerValue"),
     beatCounter: document.getElementById("beatCounter"),
@@ -33,6 +35,10 @@
 
   const LED_COUNT = 12;
   const AMBER_HOT_FROM = 9;
+  const SERATO_LED_COUNT = 16;
+  // Serato segment bands (index from bottom): green / yellow / red
+  const SERATO_YELLOW_FROM = 9;  // ~56%
+  const SERATO_RED_FROM = 13;    // ~81%
 
   // Visual themes: CSS accents + spectral coeffs canvas reads each frame
   const THEMES = {
@@ -335,6 +341,8 @@
 
   let ch1Leds = [];
   let ch2Leds = [];
+  let seratoLedsL = [];
+  let seratoLedsR = [];
   let meterCh1 = 0;
   let meterCh2 = 0;
   let peakCh1 = 0;
@@ -518,9 +526,40 @@
     return leds;
   }
 
+  function buildSeratoWell(well) {
+    if (!well) return [];
+    well.innerHTML = "";
+    const leds = [];
+    for (let i = 0; i < SERATO_LED_COUNT; i++) {
+      const el = document.createElement("div");
+      el.className = "serato-led";
+      if (i >= SERATO_RED_FROM) el.classList.add("red");
+      else if (i >= SERATO_YELLOW_FROM) el.classList.add("yellow");
+      else el.classList.add("green");
+      well.appendChild(el);
+      leds.push(el);
+    }
+    return leds;
+  }
+
+  function updateSeratoStack(leds, level, peak) {
+    const n = leds.length;
+    if (!n) return;
+    const lit = Math.round(Math.min(1, Math.max(0, level)) * n);
+    const peakIdx = Math.min(n - 1, Math.max(0, Math.round(peak * n) - 1));
+    for (let i = 0; i < n; i++) {
+      const on = i < lit;
+      leds[i].classList.toggle("on", on);
+      const isPeak = !on && i === peakIdx && peak > 0.04;
+      leds[i].classList.toggle("peak-hold", isPeak);
+    }
+  }
+
   function initMeters() {
     ch1Leds = buildLedWell(els.ch1Well);
     ch2Leds = buildLedWell(els.ch2Well);
+    seratoLedsL = buildSeratoWell(els.seratoWellL);
+    seratoLedsR = buildSeratoWell(els.seratoWellR);
   }
 
   function rmsFromTime(buf) {
@@ -564,44 +603,10 @@
 
     updateLedStack(ch1Leds, meterCh1, peakCh1);
     updateLedStack(ch2Leds, meterCh2, peakCh2);
+    updateSeratoStack(seratoLedsL, meterCh1, peakCh1);
+    updateSeratoStack(seratoLedsR, meterCh2, peakCh2);
   }
 
-  function drawSeratoEdgeMeters(w, h, l, r) {
-    const stripW = Math.max(4 * dpr, w * 0.012);
-    const pad = h * 0.08;
-    const usable = h - pad * 2;
-    const segs = 16;
-    const gap = 1.5 * dpr;
-    const segH = (usable - gap * (segs - 1)) / segs;
-
-    function colorFor(i) {
-      const t = i / (segs - 1);
-      if (t < 0.55) return [40, 220, 80];
-      if (t < 0.82) return [255, 200, 40];
-      return [255, 40, 40];
-    }
-
-    function drawStrip(x, level) {
-      const lit = Math.round(Math.min(1, level) * segs);
-      for (let i = 0; i < segs; i++) {
-        const y = h - pad - (i + 1) * segH - i * gap;
-        const [cr, cg, cb] = colorFor(i);
-        if (i < lit) {
-          ctx2d.fillStyle = `rgba(${cr},${cg},${cb},0.85)`;
-          ctx2d.shadowColor = `rgba(${cr},${cg},${cb},0.55)`;
-          ctx2d.shadowBlur = 4 * dpr;
-        } else {
-          ctx2d.fillStyle = "rgba(20,24,28,0.55)";
-          ctx2d.shadowBlur = 0;
-        }
-        ctx2d.fillRect(x, y, stripW, segH);
-      }
-      ctx2d.shadowBlur = 0;
-    }
-
-    drawStrip(w * 0.015, l);
-    drawStrip(w - w * 0.015 - stripW, r);
-  }
 
   function spawnPulse(strength, now) {
     const hueMix = strength > 0.75 ? 0.85 : strength > 0.55 ? 0.45 : 0.15;
@@ -1367,7 +1372,7 @@
     }
 
     updateChannelMeters(lvl1, lvl2, now);
-    drawSeratoEdgeMeters(w, h, meterCh1, meterCh2);
+    // Serato green/yellow/red readout lives in DOM beside CH2 (see .serato-meter)
 
     const peak = Math.min(1, Math.max(energy * 1.35, bass * 1.15, kick * 1.25, meterCh1, meterCh2));
     peakHold = Math.max(peak, peakHold - 0.012);
@@ -1569,6 +1574,8 @@
     meterCh1 = meterCh2 = peakCh1 = peakCh2 = 0;
     updateLedStack(ch1Leds, 0, 0);
     updateLedStack(ch2Leds, 0, 0);
+    updateSeratoStack(seratoLedsL, 0, 0);
+    updateSeratoStack(seratoLedsR, 0, 0);
     if (splitter) {
       try { splitter.disconnect(); } catch (_) {}
       splitter = null;

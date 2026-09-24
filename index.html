@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <title>Lighto</title>
-  <link rel="stylesheet" href="styles.css?v=9" />
+  <link rel="stylesheet" href="styles.css?v=10" />
 </head>
 <body>
   <div class="chassis" id="app">
@@ -33,8 +33,12 @@
     <main class="display" id="display">
       <canvas id="viz" aria-label="Spectrum visualizer"></canvas>
 
-      <!-- FLX4-style dual channel LED meters (amber + red clip) -->
+      <!-- FLX4 amber CH meters + Serato green/yellow/red software readout by CH2 -->
       <div class="flx-meters" id="flxMeters" aria-hidden="true">
+        <div class="serato-meter serato-meter-l" id="seratoMeterL" title="Serato L">
+          <div class="serato-well" id="seratoWellL"></div>
+          <span class="serato-label">L</span>
+        </div>
         <div class="flx-ch" data-ch="1">
           <div class="flx-scale" aria-hidden="true">
             <span>CLIP</span><span>6</span><span>3</span><span>0</span><span>-3</span><span>-7</span><span>-15</span><span>-24</span>
@@ -48,6 +52,10 @@
             <span>CLIP</span><span>6</span><span>3</span><span>0</span><span>-3</span><span>-7</span><span>-15</span><span>-24</span>
           </div>
           <span class="flx-label">CH2</span>
+        </div>
+        <div class="serato-meter serato-meter-r" id="seratoMeterR" title="Serato MASTER">
+          <div class="serato-well" id="seratoWellR"></div>
+          <span class="serato-label">MASTER</span>
         </div>
       </div>
 
@@ -88,6 +96,6 @@
       </div>
     </footer>
   </div>
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>

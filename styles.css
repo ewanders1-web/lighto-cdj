@@ -603,10 +603,10 @@ html, body {
   transform: translate(-50%, -118%);
   z-index: 3;
   display: flex;
-  align-items: stretch;
-  gap: 6px;
+  align-items: flex-end;
+  gap: 5px;
   pointer-events: none;
-  opacity: 0.88;
+  opacity: 0.92;
 }
 
 .flx-ch {
@@ -749,6 +749,128 @@ html, body {
   opacity: 0.25;
 }
 
+
+/* —— Serato software meters (green → yellow → red) —— */
+.serato-meter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  align-self: flex-end;
+}
+
+.serato-well {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  gap: 1.5px;
+  padding: 3px 2px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #050607 0%, #0a0c10 100%);
+  border: 1px solid #1c222a;
+  box-shadow:
+    inset 0 0 10px rgba(0,0,0,0.95),
+    inset 0 1px 0 rgba(255,255,255,0.05),
+    0 0 0 1px rgba(0,0,0,0.55);
+}
+
+/* Primary readout beside CH2 — real Serato deck meter width */
+.serato-meter-r .serato-well {
+  width: 14px;
+  height: min(14vh, 72px);
+}
+
+/* Matching thinner strip by CH1 for balance */
+.serato-meter-l .serato-well {
+  width: 9px;
+  height: min(11vh, 58px);
+}
+
+.serato-label {
+  position: absolute;
+  bottom: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.48rem;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  color: #6a9a72;
+  white-space: nowrap;
+}
+
+.serato-meter-r .serato-label {
+  color: #7ab882;
+  letter-spacing: 0.1em;
+}
+
+.serato-led {
+  flex: 1;
+  min-height: 0;
+  border-radius: 1px;
+  background: #12161a;
+  opacity: 0.45;
+  transition: background 40ms linear, box-shadow 40ms linear, opacity 40ms linear;
+}
+
+.serato-led.on {
+  opacity: 1;
+}
+
+.serato-led.green.on {
+  background: #28dc50;
+  box-shadow: 0 0 5px rgba(40, 220, 80, 0.85), 0 0 10px rgba(20, 180, 60, 0.4);
+}
+
+.serato-led.yellow.on {
+  background: #ffc828;
+  box-shadow: 0 0 6px rgba(255, 200, 40, 0.9), 0 0 12px rgba(255, 160, 0, 0.45);
+}
+
+.serato-led.red.on {
+  background: #ff2828;
+  box-shadow: 0 0 7px rgba(255, 40, 40, 1), 0 0 14px rgba(255, 0, 0, 0.55);
+}
+
+.serato-led.peak-hold:not(.on) {
+  opacity: 0.95;
+}
+
+.serato-led.peak-hold.green:not(.on) {
+  background: #1a9a38;
+  box-shadow: 0 0 3px rgba(40, 220, 80, 0.55);
+}
+
+.serato-led.peak-hold.yellow:not(.on) {
+  background: #c89818;
+  box-shadow: 0 0 4px rgba(255, 200, 40, 0.6);
+}
+
+.serato-led.peak-hold.red:not(.on) {
+  background: #c02020;
+  box-shadow: 0 0 5px rgba(255, 40, 40, 0.7);
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .serato-meter-r .serato-well {
+    width: 11px;
+    height: min(16vh, 52px);
+  }
+  .serato-meter-l .serato-well {
+    width: 7px;
+    height: min(12vh, 40px);
+  }
+  .serato-label {
+    bottom: -12px;
+    font-size: 0.4rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .serato-meter-r .serato-well { width: 12px; }
+  .serato-meter-l .serato-well { width: 8px; }
+  .serato-meter-l .serato-label { font-size: 0.4rem; }
+}
 
 /* —— CDJ beat counter HUD (1–2–3–4) —— */
 .beat-counter {
