@@ -43,11 +43,11 @@ html, body {
     radial-gradient(ellipse 120% 80% at 50% 0%, #12141a 0%, var(--bg) 55%),
     #000;
   padding:
-    calc(10px + var(--safe-t))
-    calc(12px + var(--safe-r))
-    calc(10px + var(--safe-b))
-    calc(12px + var(--safe-l));
-  gap: 8px;
+    calc(4px + var(--safe-t))
+    calc(6px + var(--safe-r))
+    calc(4px + var(--safe-b))
+    calc(6px + var(--safe-l));
+  gap: 4px;
 }
 
 .chassis::before {
@@ -79,10 +79,10 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 44px;
-  padding: 4px 6px;
+  min-height: 32px;
+  padding: 2px 6px;
   border: 1px solid #1c222a;
-  border-radius: 10px;
+  border-radius: 8px;
   background: linear-gradient(180deg, #12151c 0%, #0a0c10 100%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
 }
@@ -103,7 +103,7 @@ html, body {
 }
 
 .brand h1 {
-  font-size: 1.15rem;
+  font-size: 0.95rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -111,18 +111,18 @@ html, body {
 }
 
 .brand .sub {
-  font-size: 0.62rem;
-  letter-spacing: 0.18em;
+  font-size: 0.52rem;
+  letter-spacing: 0.16em;
   color: var(--muted);
   font-weight: 600;
 }
 
 .status {
-  font-size: 0.7rem;
-  letter-spacing: 0.12em;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--cyan-dim);
-  padding: 4px 10px;
+  padding: 2px 8px;
   border-radius: 999px;
   border: 1px solid #1a3038;
   background: rgba(0, 40, 50, 0.35);
@@ -143,7 +143,7 @@ html, body {
   flex: 1;
   position: relative;
   min-height: 0;
-  border-radius: 14px;
+  border-radius: 10px;
   border: 1px solid #1a1f28;
   background:
     linear-gradient(180deg, #080a0e 0%, #030405 100%);
@@ -238,10 +238,10 @@ html, body {
 .controls {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 4px;
+  padding: 6px 8px;
   border: 1px solid #1c222a;
-  border-radius: 12px;
+  border-radius: 10px;
   background: linear-gradient(180deg, #10131a 0%, #090b10 100%);
 }
 
@@ -249,7 +249,7 @@ html, body {
 .control-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -266,8 +266,8 @@ html, body {
 }
 
 .theme-sheet {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 6px;
+  padding-top: 6px;
   border-top: 1px solid #1c222a;
 }
 
@@ -289,8 +289,8 @@ html, body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 8px 12px 8px 8px;
+  min-height: 34px;
+  padding: 4px 10px 4px 6px;
   border-radius: 999px;
   font-size: 0.72rem;
   font-weight: 700;
@@ -332,14 +332,14 @@ html, body {
   border: 1px solid #2a3340;
   background: #151a22;
   color: var(--text);
-  font-size: 0.85rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  padding: 12px 18px;
-  border-radius: 10px;
-  min-height: 48px;
-  min-width: 88px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  min-height: 36px;
+  min-width: 64px;
   cursor: pointer;
 }
 
@@ -445,35 +445,35 @@ html, body {
 
 @media (orientation: landscape) and (max-height: 500px) {
   .chassis {
-    gap: 6px;
+    gap: 3px;
     padding:
-      calc(6px + var(--safe-t))
-      calc(10px + var(--safe-r))
-      calc(6px + var(--safe-b))
-      calc(10px + var(--safe-l));
+      calc(3px + var(--safe-t))
+      calc(6px + var(--safe-r))
+      calc(3px + var(--safe-b))
+      calc(6px + var(--safe-l));
   }
 
   .top-bar {
-    min-height: 36px;
+    min-height: 28px;
   }
 
   .brand h1 {
-    font-size: 1rem;
+    font-size: 0.85rem;
   }
 
   .controls {
-    padding: 6px 10px;
-    gap: 6px;
+    padding: 4px 8px;
+    gap: 4px;
   }
 
   .ctrl-btn {
-    min-height: 40px;
-    padding: 8px 14px;
+    min-height: 32px;
+    padding: 6px 10px;
   }
 
   .tap-btn {
-    padding: 14px 28px;
-    min-height: 48px;
+    padding: 12px 24px;
+    min-height: 44px;
   }
 }
 
@@ -487,13 +487,13 @@ html, body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 64px;
-  padding: 2px 8px;
-  border-radius: 8px;
+  min-width: 52px;
+  padding: 1px 6px;
+  border-radius: 6px;
   border: 1px solid #1a3038;
   background: rgba(0, 20, 28, 0.55);
   margin-left: auto;
-  margin-right: 6px;
+  margin-right: 4px;
 }
 
 .bpm-label {
@@ -505,7 +505,7 @@ html, body {
 
 .bpm-value {
   font-variant-numeric: tabular-nums;
-  font-size: 1.05rem;
+  font-size: 0.92rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--cyan);
@@ -515,8 +515,8 @@ html, body {
 
 .bpm-corner {
   position: absolute;
-  top: 10px;
-  right: 12px;
+  top: 6px;
+  right: 8px;
   z-index: 3;
   display: flex;
   flex-direction: column;
@@ -531,7 +531,7 @@ html, body {
 }
 
 .bpm-corner .bpm-value {
-  font-size: 1.05rem;
+  font-size: 0.9rem;
 }
 
 .party-btn.party-on {
@@ -557,10 +557,10 @@ html, body {
 /* Party mode: maximize display, hide chrome */
 .chassis.party {
   padding:
-    calc(2px + var(--safe-t))
-    calc(4px + var(--safe-r))
-    calc(2px + var(--safe-b))
-    calc(4px + var(--safe-l));
+    calc(0px + var(--safe-t))
+    calc(2px + var(--safe-r))
+    calc(0px + var(--safe-b))
+    calc(2px + var(--safe-l));
   gap: 0;
 }
 
@@ -582,8 +582,9 @@ html, body {
 }
 
 .chassis.party .display {
-  border-radius: 8px;
+  border-radius: 4px;
   flex: 1;
+  border-width: 0;
 }
 
 @media (orientation: landscape) and (max-height: 500px) {
@@ -599,13 +600,13 @@ html, body {
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -92%);
+  transform: translate(-50%, -118%);
   z-index: 3;
   display: flex;
   align-items: stretch;
-  gap: 8px;
+  gap: 6px;
   pointer-events: none;
-  opacity: 0.92;
+  opacity: 0.88;
 }
 
 .flx-ch {
@@ -667,10 +668,10 @@ html, body {
   flex-direction: column-reverse;
   justify-content: flex-start;
   gap: 1px;
-  width: 8px;
-  height: min(14vh, 70px);
-  padding: 3px 2px;
-  border-radius: 3px;
+  width: 7px;
+  height: min(9vh, 48px);
+  padding: 2px 1px;
+  border-radius: 2px;
   background: linear-gradient(180deg, #060708 0%, #0c0e12 100%);
   border: 1px solid #1a1e24;
   box-shadow:
@@ -722,18 +723,19 @@ html, body {
 
 @media (orientation: landscape) and (max-height: 500px) {
   .flx-well {
-    height: min(16vh, 52px);
-    width: 7px;
+    height: min(10vh, 36px);
+    width: 6px;
   }
   .flx-meters {
-    gap: 6px;
+    gap: 4px;
+    transform: translate(-50%, -130%);
   }
   .flx-scale {
-    font-size: 0.36rem;
-    min-width: 18px;
+    font-size: 0.34rem;
+    min-width: 16px;
   }
   .flx-label {
-    bottom: -14px;
+    bottom: -12px;
   }
 }
 
@@ -745,4 +747,102 @@ html, body {
 .display:has(.overlay:not([hidden])) .flx-meters,
 .display:has(.denied:not([hidden])) .flx-meters {
   opacity: 0.25;
+}
+
+
+/* —— CDJ beat counter HUD (1–2–3–4) —— */
+.beat-counter {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  pointer-events: none;
+  opacity: 0.35;
+  transition: opacity 0.2s ease;
+}
+
+.beat-counter.live {
+  opacity: 0.95;
+}
+
+.beat-counter.soft {
+  opacity: 0.4;
+}
+
+.chassis.party .beat-counter {
+  top: 10px;
+  opacity: 0.9;
+}
+
+.chassis.party .beat-counter.live {
+  opacity: 1;
+}
+
+.beat-pad {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 0.78rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: rgba(var(--cyan-rgb), 0.35);
+  background: rgba(10, 14, 18, 0.55);
+  border: 1px solid rgba(var(--cyan-rgb), 0.18);
+  text-shadow: none;
+  transition: color 80ms linear, background 80ms linear, box-shadow 80ms linear, transform 80ms ease;
+}
+
+.beat-pad.active {
+  color: var(--cyan);
+  background: rgba(var(--cyan-rgb), 0.16);
+  border-color: rgba(var(--cyan-rgb), 0.55);
+  box-shadow: 0 0 10px rgba(var(--cyan-rgb), 0.45);
+}
+
+.beat-pad.blink {
+  animation: beat-blink 180ms ease-out;
+}
+
+.beat-pad.downbeat.active {
+  color: #fff;
+  background: rgba(var(--orange-rgb), 0.28);
+  border-color: rgba(var(--orange-rgb), 0.75);
+  box-shadow:
+    0 0 14px rgba(var(--orange-rgb), 0.7),
+    0 0 22px rgba(var(--cyan-rgb), 0.35);
+  transform: scale(1.18);
+}
+
+.beat-pad.downbeat.blink {
+  animation: beat-blink-down 240ms ease-out;
+}
+
+@keyframes beat-blink {
+  0% { transform: scale(1.12); filter: brightness(1.45); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
+@keyframes beat-blink-down {
+  0% { transform: scale(1.32); filter: brightness(1.7); }
+  55% { transform: scale(1.12); filter: brightness(1.25); }
+  100% { transform: scale(1.18); filter: brightness(1); }
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .beat-counter { top: 4px; gap: 4px; padding: 2px 6px; }
+  .beat-pad { width: 22px; height: 22px; font-size: 0.68rem; }
 }

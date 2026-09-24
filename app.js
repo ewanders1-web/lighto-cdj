@@ -28,6 +28,7 @@
     ch2Well: document.getElementById("ch2Well"),
     bpmValue: document.getElementById("bpmValue"),
     bpmCornerValue: document.getElementById("bpmCornerValue"),
+    beatCounter: document.getElementById("beatCounter"),
   };
 
   const LED_COUNT = 12;
@@ -327,6 +328,11 @@
   let partyTimer = 0;
   const PARTY_HIDE_MS = 3500;
 
+  // CDJ-style 1–4 beat counter (advances on kick/beat)
+  let beatCount = 0; // 0 = idle/soft, 1–4 active
+  let beatPads = [];
+  let beatFlashToken = 0;
+
   let ch1Leds = [];
   let ch2Leds = [];
   let meterCh1 = 0;
@@ -408,6 +414,61 @@
     bpmDisplay = 0;
     bpmConfident = false;
     setBpmText("--.-");
+    softResetBeatCounter();
+  }
+
+  function initBeatCounter() {
+    beatPads = els.beatCounter
+      ? Array.from(els.beatCounter.querySelectorAll(".beat-pad"))
+      : [];
+  }
+
+  function softResetBeatCounter() {
+    beatCount = 0;
+    if (!els.beatCounter) return;
+    els.beatCounter.classList.remove("live");
+    els.beatCounter.classList.add("soft");
+    els.beatCounter.setAttribute("aria-hidden", "true");
+    for (const pad of beatPads) {
+      pad.classList.remove("active", "blink", "downbeat");
+    }
+  }
+
+  function paintBeatCounter(flash) {
+    if (!els.beatCounter || !beatPads.length) return;
+    const live = beatCount >= 1;
+    els.beatCounter.classList.toggle("live", live);
+    els.beatCounter.classList.toggle("soft", !live);
+    els.beatCounter.setAttribute("aria-hidden", live ? "false" : "true");
+    for (const pad of beatPads) {
+      const n = Number(pad.dataset.beat);
+      const on = live && n === beatCount;
+      pad.classList.toggle("active", on);
+      pad.classList.toggle("downbeat", on && beatCount === 1);
+      if (flash && on) {
+        pad.classList.remove("blink");
+        // Force reflow so blink restarts each beat
+        void pad.offsetWidth;
+        pad.classList.add("blink");
+        const token = ++beatFlashToken;
+        window.setTimeout(() => {
+          if (token === beatFlashToken) pad.classList.remove("blink");
+        }, beatCount === 1 ? 260 : 200);
+      } else if (!on) {
+        pad.classList.remove("blink");
+      }
+    }
+  }
+
+  function advanceBeatCounter() {
+    beatCount = beatCount <= 0 ? 1 : (beatCount % 4) + 1;
+    paintBeatCounter(true);
+  }
+
+  function tickBeatCounterSoft(now) {
+    if (beatCount <= 0) return;
+    const stale = Math.max(900, beatInterval * 2.4);
+    if (now - lastBeat > stale) softResetBeatCounter();
   }
 
   function setParty(on) {
@@ -595,6 +656,7 @@
       }
       last808 = now;
       lastBeat = now;
+      advanceBeatCounter();
       const strength =
         Math.min(1.25, ((kick - thr) / Math.max(0.04, thr)) * 0.55 + kick * 1.35 + rise * 2) *
         Math.min(1.35, sens * 0.95);
@@ -624,6 +686,7 @@
         noteBeatGap(gap);
       }
       lastBeat = now;
+      advanceBeatCounter();
       const strength = Math.min(1, (bass - threshold) / Math.max(0.04, threshold) * 0.6 + bass);
       // Stronger phone-mic hits still get the heavy boom
       if (bass > bassAvg * 1.35 && bass > 0.06) {
@@ -644,6 +707,7 @@
       const gap = now - lastBeat;
       if (lastBeat > 0) noteBeatGap(gap);
       lastBeat = now;
+      advanceBeatCounter();
       spawnPulse(Math.min(0.85, energy * 1.4 * sens * 0.7), now);
       return true;
     }
@@ -669,8 +733,8 @@
 
   function drawJogPlatter(w, h, energy, kick, now) {
     const cx = w * 0.5;
-    const cy = h * 0.085;
-    const baseR = Math.min(w, h) * 0.085;
+    const cy = h * 0.055;
+    const baseR = Math.min(w, h) * 0.065;
     const spin = (bpmConfident ? bpmDisplay : 120) / 60;
     jogAngle += (0.008 + energy * 0.02 + kick * 0.03) * (0.7 + spin * 0.15);
     jogPulse *= 0.9;
@@ -946,8 +1010,8 @@
 
   function drawSeratoWavePanel(w, h) {
     // Primary visual band — dominant Serato stack
-    const panelTop = h * 0.11;
-    const panelH = h * 0.72;
+    const panelTop = h * 0.09;
+    const panelH = h * 0.74;
     const panelBot = panelTop + panelH;
     const padX = w * 0.03;
     const innerW = w - padX * 2;
@@ -1231,6 +1295,7 @@
     if (!detect808(kick, bass, energy, sens, now)) {
       detectBeat(bass, energy, sens, now);
     }
+    tickBeatCounterSoft(now);
 
     // Always-on energy glow so the screen moves between beats
     drawAmbientEnergy(w, h, energy, kick);
@@ -1435,6 +1500,7 @@
       statusTick = 0;
       jogAngle = 0;
       jogPulse = 0;
+      initBeatCounter();
       resetBpm();
 
       running = true;
@@ -1592,13 +1658,15 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=8").catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=9").catch(() => {});
     });
   }
 
   buildThemeChips();
   restoreTheme();
   initMeters();
+  initBeatCounter();
+  softResetBeatCounter();
   resize();
   drawIdle();
   setBpmText("--.-");
