@@ -1372,7 +1372,7 @@
     }
 
     updateChannelMeters(lvl1, lvl2, now);
-    // Serato green/yellow/red readout lives in DOM beside CH2 (see .serato-meter)
+    // Serato green/yellow/red L/R readouts live in DOM outside CH1/CH2 (see .serato-meter)
 
     const peak = Math.min(1, Math.max(energy * 1.35, bass * 1.15, kick * 1.25, meterCh1, meterCh2));
     peakHold = Math.max(peak, peakHold - 0.012);

@@ -775,16 +775,10 @@ html, body {
     0 0 0 1px rgba(0,0,0,0.55);
 }
 
-/* Primary readout beside CH2 — real Serato deck meter width */
-.serato-meter-r .serato-well {
+/* Symmetric Serato deck meters: L (outside CH1) + R (outside CH2), same size */
+.serato-meter .serato-well {
   width: 14px;
   height: min(14vh, 72px);
-}
-
-/* Matching thinner strip by CH1 for balance */
-.serato-meter-l .serato-well {
-  width: 9px;
-  height: min(11vh, 58px);
 }
 
 .serato-label {
@@ -799,7 +793,7 @@ html, body {
   white-space: nowrap;
 }
 
-.serato-meter-r .serato-label {
+.serato-meter .serato-label {
   color: #7ab882;
   letter-spacing: 0.1em;
 }
@@ -852,13 +846,9 @@ html, body {
 }
 
 @media (orientation: landscape) and (max-height: 500px) {
-  .serato-meter-r .serato-well {
+  .serato-meter .serato-well {
     width: 11px;
     height: min(16vh, 52px);
-  }
-  .serato-meter-l .serato-well {
-    width: 7px;
-    height: min(12vh, 40px);
   }
   .serato-label {
     bottom: -12px;
@@ -867,9 +857,7 @@ html, body {
 }
 
 @media (max-width: 360px) {
-  .serato-meter-r .serato-well { width: 12px; }
-  .serato-meter-l .serato-well { width: 8px; }
-  .serato-meter-l .serato-label { font-size: 0.4rem; }
+  .serato-meter .serato-well { width: 12px; }
 }
 
 /* —— CDJ beat counter HUD (1–2–3–4) —— */
