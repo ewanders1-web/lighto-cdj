@@ -31,6 +31,7 @@
     bpmValue: document.getElementById("bpmValue"),
     bpmCornerValue: document.getElementById("bpmCornerValue"),
     beatCounter: document.getElementById("beatCounter"),
+    secDots: document.getElementById("secDots"),
   };
 
   const LED_COUNT = 12;
@@ -464,6 +465,42 @@
         }, beatCount === 1 ? 260 : 200);
       } else if (!on) {
         pad.classList.remove("blink");
+      }
+    }
+  }
+
+  // —— Steady 1-second 4-count dots (bottom). Clock-driven, NOT beat-driven. ——
+  // Runs all the time on its own rAF loop; index derived from performance.now()
+  // so it never drifts (dropped frames / backgrounding just skip to the right dot).
+  let secDots = [];
+  let secAnchor = performance.now();
+  let secIdx = -1;
+  let secRaf = 0;
+
+  function initSecDots() {
+    secDots = els.secDots ? Array.from(els.secDots.querySelectorAll(".sec-dot")) : [];
+  }
+
+  function anchorSecDots() {
+    secAnchor = performance.now();
+    secIdx = -1;
+  }
+
+  function tickSecDots() {
+    secRaf = requestAnimationFrame(tickSecDots);
+    if (!secDots.length) return;
+    const idx = Math.floor((performance.now() - secAnchor) / 1000) % 4;
+    if (idx === secIdx) return;
+    secIdx = idx;
+    for (let i = 0; i < secDots.length; i++) {
+      const d = secDots[i];
+      const on = i === idx;
+      d.classList.toggle("on", on);
+      d.classList.toggle("down", on && i === 0);
+      d.classList.remove("blink");
+      if (on) {
+        void d.offsetWidth; // restart blink animation each second
+        d.classList.add("blink");
       }
     }
   }
@@ -1512,6 +1549,7 @@
       jogPulse = 0;
       initBeatCounter();
       resetBpm();
+      anchorSecDots();
 
       running = true;
       els.overlay.hidden = true;
@@ -1670,7 +1708,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=12", { updateViaCache: "none" }).catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=13", { updateViaCache: "none" }).catch(() => {});
     });
   }
 
@@ -1679,6 +1717,9 @@
   initMeters();
   initBeatCounter();
   softResetBeatCounter();
+  initSecDots();
+  cancelAnimationFrame(secRaf);
+  secRaf = requestAnimationFrame(tickSecDots);
   resize();
   drawIdle();
   setBpmText("--.-");

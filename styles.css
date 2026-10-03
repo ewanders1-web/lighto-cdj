@@ -956,3 +956,78 @@ html, body {
   .beat-counter { top: 4px; gap: 4px; padding: 2px 6px; }
   .beat-pad { width: 22px; height: 22px; font-size: 0.68rem; }
 }
+
+
+/* —— Steady 1-second 4-count dots (bottom, below spectrum strip) —— */
+/* Canvas: wave panel ends ~83% h, spectrum strip ~85–92% h; dots sit centered in the 0–8% bottom band. */
+.sec-dots {
+  position: absolute;
+  left: 50%;
+  bottom: 4%;
+  transform: translate(-50%, 50%);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+  opacity: 0.55;
+  transition: opacity 0.25s ease;
+}
+
+.chassis:has(.ctrl-btn.running) .sec-dots,
+.chassis.party .sec-dots {
+  opacity: 1;
+}
+
+.sec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(var(--cyan-rgb), 0.14);
+  border: 1px solid rgba(var(--cyan-rgb), 0.22);
+  transition: background 120ms linear, box-shadow 120ms linear, border-color 120ms linear;
+}
+
+.sec-dot[data-sec="1"] {
+  background: rgba(var(--orange-rgb), 0.16);
+  border-color: rgba(var(--orange-rgb), 0.3);
+}
+
+.sec-dot.on {
+  background: var(--cyan);
+  border-color: rgba(var(--cyan-rgb), 0.85);
+  box-shadow: 0 0 6px rgba(var(--cyan-rgb), 0.7), 0 0 12px rgba(var(--cyan-rgb), 0.35);
+}
+
+.sec-dot.on.down {
+  background: var(--orange);
+  border-color: rgba(var(--orange-rgb), 0.95);
+  box-shadow: 0 0 8px rgba(var(--orange-rgb), 0.9), 0 0 18px rgba(var(--orange-rgb), 0.5);
+}
+
+.sec-dot.blink { animation: sec-blink 1000ms ease-out; }
+.sec-dot.down.blink { animation: sec-blink-down 1000ms ease-out; }
+
+@keyframes sec-blink {
+  0% { transform: scale(1.35); filter: brightness(1.5); }
+  18% { transform: scale(1.05); filter: brightness(1.1); }
+  100% { transform: scale(1); filter: brightness(0.85); }
+}
+
+@keyframes sec-blink-down {
+  0% { transform: scale(1.6); filter: brightness(1.8); }
+  20% { transform: scale(1.25); filter: brightness(1.2); }
+  100% { transform: scale(1.15); filter: brightness(0.9); }
+}
+
+/* Party hint moves to bottom-left so it doesn't sit on the dots */
+.party-hint {
+  left: 12px;
+  bottom: 8px;
+  transform: none;
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .sec-dots { gap: 8px; }
+  .sec-dot { width: 6px; height: 6px; }
+}
