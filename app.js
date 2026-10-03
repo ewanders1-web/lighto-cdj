@@ -1056,28 +1056,32 @@
 
     const colW = Math.max(1, (innerW * 0.5) / Math.max(1, cols - 1));
 
-    // Grid / bar lines across all tiers (left of playhead = history)
+    // Grid / bar lines across all tiers, mirrored about the playhead
     const barPx = Math.max(18 * dpr, innerW * 0.07);
     ctx2d.font = `${Math.max(8, 9 * dpr)}px -apple-system, sans-serif`;
     ctx2d.textAlign = "center";
+    ctx2d.strokeStyle = "rgba(80,90,100,0.28)";
+    ctx2d.lineWidth = 1 * dpr;
+    ctx2d.beginPath();
     for (let gx = playX; gx >= padX; gx -= barPx) {
-      ctx2d.strokeStyle = "rgba(80,90,100,0.28)";
-      ctx2d.lineWidth = 1 * dpr;
-      ctx2d.beginPath();
       ctx2d.moveTo(gx, panelTop);
       ctx2d.lineTo(gx, panelBot);
-      ctx2d.stroke();
+      const rx = playX * 2 - gx;
+      if (rx > playX) {
+        ctx2d.moveTo(rx, panelTop);
+        ctx2d.lineTo(rx, panelBot);
+      }
     }
-    // Future-side faint grid
-    for (let gx = playX + barPx; gx <= padX + innerW; gx += barPx) {
-      ctx2d.strokeStyle = "rgba(60,70,80,0.15)";
-      ctx2d.beginPath();
-      ctx2d.moveTo(gx, panelTop);
-      ctx2d.lineTo(gx, panelBot);
-      ctx2d.stroke();
-    }
+    ctx2d.stroke();
 
-    // Draw history columns: newest at playhead, older to the left
+    // Draw history columns mirrored about the playhead: newest at the center,
+    // older samples spreading outward both left and right. Colors are computed
+    // once per column and reused for both halves.
+    const mirX = playX * 2;
+    const fr2 = (rx, ry, rw, rh) => {
+      ctx2d.fillRect(rx, ry, rw, rh);
+      ctx2d.fillRect(mirX - rx - rw, ry, rw, rh);
+    };
     for (let i = 0; i < cols; i++) {
       const idx = (waveWrite - 1 - i + WAVE_COLS * 4) % WAVE_COLS;
       const s = waveHist[idx];
@@ -1096,33 +1100,33 @@
       const bassR = Math.min(255, bbod.r0 + s.bass * bbod.rS);
       const bassG = Math.min(255, bbod.g0 + s.bass * bbod.gBass + s.mid * bbod.gMid);
       ctx2d.fillStyle = `rgba(${bassR},${bassG},${bbod.b},0.95)`;
-      ctx2d.fillRect(x, midTop - lowHalf, cw, lowHalf * 2);
+      fr2(x, midTop - lowHalf, cw, lowHalf * 2);
       // Mid layer — spectral overlay
       const midHalf = half * (0.4 + s.mid * 0.55);
       ctx2d.fillStyle = `rgba(${Math.max(0, cr - 30)},${Math.min(255, cg + 50)},${Math.min(255, cb)},0.9)`;
-      ctx2d.fillRect(x + cw * 0.12, midTop - midHalf, Math.max(1, cw * 0.76), midHalf * 2);
+      fr2(x + cw * 0.12, midTop - midHalf, Math.max(1, cw * 0.76), midHalf * 2);
       // High tips
       const htip = currentTheme.highTip;
       const hiHalf = half * (0.4 + s.high * 0.7);
       const tipH = Math.max(2 * dpr, hiHalf * 0.28);
       ctx2d.fillStyle = `rgba(${Math.min(255, htip.r0 + s.high * htip.rS)},${Math.min(255, htip.g0 + s.high * htip.gS)},${Math.min(255, htip.b0 + s.high * htip.bS)},1)`;
-      ctx2d.fillRect(x, midTop - hiHalf, Math.max(1, cw * 0.7), tipH);
-      ctx2d.fillRect(x, midTop + hiHalf - tipH, Math.max(1, cw * 0.7), tipH);
+      fr2(x, midTop - hiHalf, Math.max(1, cw * 0.7), tipH);
+      fr2(x, midTop + hiHalf - tipH, Math.max(1, cw * 0.7), tipH);
       if (s.high > 0.35) {
         const he = currentTheme.highEdge;
         ctx2d.fillStyle = rgbaOf(he, 0.4 + s.high * 0.5);
-        ctx2d.fillRect(x, midTop - hiHalf - 1 * dpr, Math.max(1, cw * 0.45), 2 * dpr);
-        ctx2d.fillRect(x, midTop + hiHalf - 1 * dpr, Math.max(1, cw * 0.45), 2 * dpr);
+        fr2(x, midTop - hiHalf - 1 * dpr, Math.max(1, cw * 0.45), 2 * dpr);
+        fr2(x, midTop + hiHalf - 1 * dpr, Math.max(1, cw * 0.45), 2 * dpr);
       }
 
       // --- Mid tier: transient ribbon ---
       const mr = currentTheme.midRibbon;
       const onsetH = Math.max(2 * dpr, s.onset * midH * 0.98);
       ctx2d.fillStyle = `rgba(${Math.min(255, mr.r0 + s.onset * mr.rS)},${Math.min(255, mr.g0 + s.onset * mr.gS)},${mr.b},${0.45 + s.onset * 0.55})`;
-      ctx2d.fillRect(x, midY + midH - onsetH, Math.max(1, cw * 0.9), onsetH);
+      fr2(x, midY + midH - onsetH, Math.max(1, cw * 0.9), onsetH);
       if (s.onset > 0.4) {
         ctx2d.fillStyle = `rgba(255,255,255,${s.onset})`;
-        ctx2d.fillRect(x, midY + 1, Math.max(1, cw * 0.75), 2.5 * dpr);
+        fr2(x, midY + 1, Math.max(1, cw * 0.75), 2.5 * dpr);
       }
 
       // --- Bottom tier: overview ---
@@ -1133,7 +1137,7 @@
       const bg = Math.min(255, ov.bg0 + s.mid * ov.bgMid + s.amp * ov.bgAmp);
       const bb = Math.min(255, ov.bb0 + s.high * ov.bbHigh + s.amp * ov.bbAmp);
       ctx2d.fillStyle = `rgba(${br},${bg},${bb},0.95)`;
-      ctx2d.fillRect(x, midBot - botHalf, cw, botHalf * 2);
+      fr2(x, midBot - botHalf, cw, botHalf * 2);
     }
 
     // Centerlines
@@ -1161,8 +1165,9 @@
     ctx2d.fillStyle = "rgba(220,230,240,0.75)";
     let barNum = waveBarCounter;
     for (let gx = playX, k = 0; gx >= padX && k < 8; gx -= barPx, k++) {
-      const label = ((barNum - k - 1 + 64) % 16) + 1;
-      ctx2d.fillText(String(label), gx, botY + 10 * dpr);
+      const label = String(((barNum - k - 1 + 64) % 16) + 1);
+      ctx2d.fillText(label, gx, botY + 10 * dpr);
+      if (k > 0) ctx2d.fillText(label, playX * 2 - gx, botY + 10 * dpr); // mirrored right side
     }
 
     // Bright white playhead through all tiers
@@ -1665,7 +1670,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=9").catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=12", { updateViaCache: "none" }).catch(() => {});
     });
   }
 
