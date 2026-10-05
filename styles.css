@@ -259,6 +259,36 @@ html, body {
   padding-right: 12px;
 }
 
+.mode-btn {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+/* Transient label shown when switching visual modes */
+.mode-toast {
+  position: absolute;
+  top: 14%;
+  left: 50%;
+  transform: translateX(-50%) scale(0.94);
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: rgba(8, 12, 16, 0.82);
+  border: 1px solid rgba(var(--cyan-rgb), 0.45);
+  color: var(--cyan);
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 6;
+}
+
+.mode-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
 .colors-btn.open {
   border-color: rgba(var(--cyan-rgb), 0.55);
   color: var(--cyan);
