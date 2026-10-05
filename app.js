@@ -2,6 +2,7 @@
   "use strict";
 
   const THEME_KEY = "lighto-theme";
+  const MODE_KEY = "lighto-mode";
   const BAR_COUNT = 48;
   const MAX_PULSES = 6;
   const PULSE_LIFE_MS = 720;
@@ -18,6 +19,8 @@
     partyBtn: document.getElementById("partyBtn"),
     partyHint: document.getElementById("partyHint"),
     colorsBtn: document.getElementById("colorsBtn"),
+    modeBtn: document.getElementById("modeBtn"),
+    modeToast: document.getElementById("modeToast"),
     themeSheet: document.getElementById("themeSheet"),
     themeChips: document.getElementById("themeChips"),
     sensitivity: document.getElementById("sensitivity"),
@@ -294,6 +297,63 @@
     applyTheme(id, false);
   }
 
+  // ---- Visual modes (Lighto 2.0): switchable canvas visualizers ----
+  // classic = the original full CDJ view; the rest are alternate takes
+  // that reuse the same beat/kick/energy analysis + DOM chrome.
+  const MODES = [
+    { id: "classic", name: "Classic" },
+    { id: "orbit", name: "Orbit" },
+    { id: "scope", name: "Scope" },
+    { id: "nebula", name: "Nebula" },
+    { id: "strobe", name: "Strobe" },
+  ];
+  let modeIndex = 0;
+  let modeToastTimer = 0;
+
+  function currentMode() {
+    return MODES[modeIndex].id;
+  }
+
+  function syncModeBtn() {
+    if (els.modeBtn) els.modeBtn.textContent = "Mode: " + MODES[modeIndex].name;
+  }
+
+  function showModeToast() {
+    if (!els.modeToast) return;
+    els.modeToast.textContent = MODES[modeIndex].name;
+    els.modeToast.classList.add("show");
+    window.clearTimeout(modeToastTimer);
+    modeToastTimer = window.setTimeout(() => {
+      els.modeToast.classList.remove("show");
+    }, 1200);
+  }
+
+  function setMode(id, persist) {
+    const i = MODES.findIndex((m) => m.id === id);
+    if (i >= 0) modeIndex = i;
+    syncModeBtn();
+    if (persist !== false) {
+      try {
+        localStorage.setItem(MODE_KEY, MODES[modeIndex].id);
+      } catch (_) {}
+    }
+  }
+
+  function cycleMode() {
+    modeIndex = (modeIndex + 1) % MODES.length;
+    setMode(MODES[modeIndex].id, true);
+    showModeToast();
+  }
+
+  function restoreMode() {
+    let id = "classic";
+    try {
+      const saved = localStorage.getItem(MODE_KEY);
+      if (saved && MODES.some((m) => m.id === saved)) id = saved;
+    } catch (_) {}
+    setMode(id, false);
+  }
+
   const ctx2d = els.canvas.getContext("2d", { alpha: false });
 
   let audioCtx = null;
@@ -324,6 +384,15 @@
   let statusTick = 0;
   const pulses = []; // { t0, strength, hueMix }
   const booms = []; // { t0, strength } — fat 808 kicks
+
+  // Lighto 2.0 mode state: nebula particle pool + strobe panel levels
+  const nebulaParts = []; // { x, y, vx, vy, life, maxLife, size, heat }
+  const NEBULA_MAX = 240;
+  const STROBE_COLS = 4;
+  const STROBE_ROWS = 6;
+  const strobeVals = new Float32Array(STROBE_COLS * STROBE_ROWS);
+  const strobePhase = new Float32Array(STROBE_COLS * STROBE_ROWS);
+  for (let si = 0; si < strobePhase.length; si++) strobePhase[si] = Math.random();
 
   // BPM / jog / party
   const beatGaps = [];
@@ -984,6 +1053,278 @@
     }
   }
 
+  // ============ Lighto 2.0 visual modes ============
+
+  function roundRectPath(x, y, w, h, rad) {
+    const r = Math.min(rad, w / 2, h / 2);
+    ctx2d.beginPath();
+    ctx2d.moveTo(x + r, y);
+    ctx2d.arcTo(x + w, y, x + w, y + h, r);
+    ctx2d.arcTo(x + w, y + h, x, y + h, r);
+    ctx2d.arcTo(x, y + h, x, y, r);
+    ctx2d.arcTo(x, y, x + w, y, r);
+    ctx2d.closePath();
+  }
+
+  // Orbit: circular spectrum radiating around a big central jog platter.
+  function drawOrbitMode(w, h, now, kick, bass, energy) {
+    const cx = w * 0.5;
+    const cy = h * 0.44;
+    const minDim = Math.min(w, h);
+    const baseR = minDim * 0.16;
+
+    const spin = (bpmConfident ? bpmDisplay : 120) / 60;
+    jogAngle += (0.008 + energy * 0.02 + kick * 0.03) * (0.7 + spin * 0.15);
+    jogPulse *= 0.9;
+    const breath = 1 + ambientGlow * 0.06 + jogPulse * 0.12;
+
+    const wash = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, minDim * 0.7);
+    wash.addColorStop(0, rgbaOf(CYAN, 0.05 + kick * 0.12));
+    wash.addColorStop(0.6, rgbaOf(ORANGE, 0.04 + energy * 0.06));
+    wash.addColorStop(1, "rgba(0,0,0,0)");
+    ctx2d.fillStyle = wash;
+    ctx2d.fillRect(0, 0, w, h);
+
+    // Radial spectrum bars
+    const r0 = baseR * breath;
+    const maxLen = minDim * 0.3;
+    const barW = Math.max(2 * dpr, ((Math.PI * 2 * r0) / BAR_COUNT) * 0.62);
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const a = (i / BAR_COUNT) * Math.PI * 2 - Math.PI / 2;
+      const level = Math.min(1, smoothed[i] * (1 + kick * 0.4));
+      const len = Math.max(2 * dpr, level * maxLen);
+      const [r, g, b] = lerpColor(CYAN, ORANGE, i / (BAR_COUNT - 1));
+      const cos = Math.cos(a);
+      const sin = Math.sin(a);
+      ctx2d.beginPath();
+      ctx2d.moveTo(cx + cos * r0, cy + sin * r0);
+      ctx2d.lineTo(cx + cos * (r0 + len), cy + sin * (r0 + len));
+      ctx2d.strokeStyle = `rgba(${r},${g},${b},${0.25 + level * 0.75})`;
+      ctx2d.lineWidth = barW;
+      ctx2d.lineCap = "round";
+      ctx2d.stroke();
+    }
+
+    // Beat rings expanding outward
+    const maxR = minDim * 0.62;
+    for (let i = pulses.length - 1; i >= 0; i--) {
+      const p = pulses[i];
+      const age = (now - p.t0) / PULSE_LIFE_MS;
+      if (age >= 1) continue;
+      const ease = 1 - Math.pow(1 - age, 2.2);
+      const alpha = (1 - age) * (0.5 + p.strength * 0.5);
+      const [r, g, b] = lerpColor(CYAN, ORANGE, p.hueMix);
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, r0 + ease * (maxR - r0), 0, Math.PI * 2);
+      ctx2d.strokeStyle = `rgba(${r},${g},${b},${alpha})`;
+      ctx2d.lineWidth = Math.max(2 * dpr, (8 - age * 6) * dpr);
+      ctx2d.stroke();
+    }
+
+    // 808 shockwave ring
+    for (let i = booms.length - 1; i >= 0; i--) {
+      const k = booms[i];
+      const age = (now - k.t0) / BOOM_LIFE_MS;
+      if (age >= 1) continue;
+      const expand = 1 - Math.pow(1 - Math.min(1, age * 1.15), 1.6);
+      const alpha = (1 - age) * (0.6 + k.strength * 0.4);
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, r0 + expand * (maxR - r0) * 1.05, 0, Math.PI * 2);
+      ctx2d.strokeStyle = `rgba(${BOOM[0]},${BOOM[1]},${BOOM[2]},${alpha})`;
+      ctx2d.lineWidth = Math.max(4 * dpr, (20 - age * 12) * dpr);
+      ctx2d.stroke();
+    }
+
+    // Central jog platter
+    const pr = r0 * 0.82;
+    ctx2d.beginPath();
+    ctx2d.arc(cx, cy, pr, 0, Math.PI * 2);
+    ctx2d.strokeStyle = rgbaOf(CYAN, 0.25 + jogPulse * 0.45 + kick * 0.2);
+    ctx2d.lineWidth = Math.max(2 * dpr, (3 + jogPulse * 4) * dpr);
+    ctx2d.stroke();
+    ctx2d.save();
+    ctx2d.translate(cx, cy);
+    ctx2d.rotate(jogAngle);
+    const ticks = 24;
+    for (let i = 0; i < ticks; i++) {
+      const a = (i / ticks) * Math.PI * 2;
+      const major = i % 6 === 0;
+      ctx2d.beginPath();
+      ctx2d.moveTo(Math.cos(a) * pr * 0.88, Math.sin(a) * pr * 0.88);
+      ctx2d.lineTo(Math.cos(a) * pr * 1.04, Math.sin(a) * pr * 1.04);
+      ctx2d.strokeStyle = major ? rgbaOf(CYAN, 0.4 + jogPulse * 0.4) : rgbaOf(ORANGE, 0.22 + energy * 0.25);
+      ctx2d.lineWidth = (major ? 2 : 1.2) * dpr;
+      ctx2d.stroke();
+    }
+    ctx2d.restore();
+    ctx2d.beginPath();
+    ctx2d.arc(cx, cy, pr * 0.14, 0, Math.PI * 2);
+    ctx2d.fillStyle = rgbaOf(ORANGE, 0.4 + jogPulse * 0.4);
+    ctx2d.fill();
+  }
+
+  // Scope: big phosphor oscilloscope trace of the live mic signal.
+  function drawScopeMode(w, h, now, kick, energy) {
+    if (!timeData) return;
+    const midY = h * 0.44;
+    const amp = Math.min(1, 0.25 + energy * 1.6 + kick * 0.9);
+
+    ctx2d.strokeStyle = "rgba(120,140,160,0.10)";
+    ctx2d.lineWidth = 1;
+    for (let gy = 0.2; gy < 0.9; gy += 0.175) {
+      ctx2d.beginPath();
+      ctx2d.moveTo(0, h * gy);
+      ctx2d.lineTo(w, h * gy);
+      ctx2d.stroke();
+    }
+    ctx2d.beginPath();
+    ctx2d.moveTo(0, midY);
+    ctx2d.lineTo(w, midY);
+    ctx2d.strokeStyle = rgbaOf(CYAN, 0.25);
+    ctx2d.stroke();
+
+    const n = timeData.length;
+    const glow = 0.55 + kick * 0.45;
+    const passes = [
+      { width: 7 * dpr, alpha: 0.22 * glow },
+      { width: 2.2 * dpr, alpha: 0.95 * glow },
+    ];
+    for (const pass of passes) {
+      ctx2d.beginPath();
+      for (let x = 0; x <= w; x += 2 * dpr) {
+        const idx = Math.floor((x / w) * (n - 1));
+        const v = (timeData[idx] - 128) / 128;
+        const y = midY + v * amp * h * 0.32;
+        if (x === 0) ctx2d.moveTo(x, y);
+        else ctx2d.lineTo(x, y);
+      }
+      ctx2d.strokeStyle = `rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},${Math.min(1, pass.alpha)})`;
+      ctx2d.lineWidth = pass.width;
+      ctx2d.lineJoin = "round";
+      ctx2d.stroke();
+    }
+
+    if (kick > 0.12) {
+      ctx2d.fillStyle = rgbaOf(ORANGE, Math.min(0.8, kick));
+      const tickW = w * 0.02;
+      ctx2d.fillRect(w * 0.5 - tickW / 2, h * 0.86, tickW, h * 0.05);
+    }
+  }
+
+  // Nebula: additive particle bursts fired from center on kick/energy.
+  function drawNebulaMode(w, h, now, kick, bass, energy) {
+    const cx = w * 0.5;
+    const cy = h * 0.44;
+
+    const spawnN = Math.min(14, Math.round(kick * 9 + energy * 3));
+    for (let s = 0; s < spawnN; s++) {
+      if (nebulaParts.length >= NEBULA_MAX) nebulaParts.shift();
+      const a = Math.random() * Math.PI * 2;
+      const sp = (0.6 + Math.random() * 2.4) * dpr * (0.7 + kick * 1.6);
+      nebulaParts.push({
+        x: cx + (Math.random() - 0.5) * 8 * dpr,
+        y: cy + (Math.random() - 0.5) * 8 * dpr,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        life: 0,
+        maxLife: 50 + Math.random() * 70,
+        size: (1 + Math.random() * 2.6) * dpr,
+        heat: Math.min(1, kick * 1.2 + Math.random() * 0.35),
+      });
+    }
+
+    ctx2d.save();
+    ctx2d.globalCompositeOperation = "lighter";
+    for (let i = nebulaParts.length - 1; i >= 0; i--) {
+      const p = nebulaParts[i];
+      p.life++;
+      if (p.life >= p.maxLife) {
+        nebulaParts.splice(i, 1);
+        continue;
+      }
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vx *= 0.985;
+      p.vy *= 0.985;
+      const t = p.life / p.maxLife;
+      const alpha = (1 - t) * 0.75;
+      const [r, g, b] = lerpColor(CYAN, ORANGE, Math.min(1, p.heat * (1 - t * 0.4)));
+      ctx2d.beginPath();
+      ctx2d.arc(p.x, p.y, Math.max(0.5, p.size * (1 - t * 0.5)), 0, Math.PI * 2);
+      ctx2d.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+      ctx2d.fill();
+    }
+    ctx2d.restore();
+
+    if (kick > 0.03) {
+      const cr = 90 * dpr;
+      const core = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, cr);
+      core.addColorStop(0, rgbaOf(BOOM_CORE, 0.5 * kick));
+      core.addColorStop(1, "rgba(0,0,0,0)");
+      ctx2d.fillStyle = core;
+      ctx2d.fillRect(cx - cr, cy - cr, cr * 2, cr * 2);
+    }
+  }
+
+  // Strobe: beat-reactive light panel grid, each panel on its own phase.
+  function drawStrobeMode(w, h, now, kick, bass, energy) {
+    const pad = 10 * dpr;
+    const gap = 8 * dpr;
+    const top = h * 0.06;
+    const gw = w - pad * 2;
+    const gh = h * 0.78 - pad;
+    const cw = (gw - gap * (STROBE_COLS - 1)) / STROBE_COLS;
+    const ch = (gh - gap * (STROBE_ROWS - 1)) / STROBE_ROWS;
+
+    for (let r = 0; r < STROBE_ROWS; r++) {
+      for (let c = 0; c < STROBE_COLS; c++) {
+        const i = r * STROBE_COLS + c;
+        const drive = Math.min(1, kick * (0.75 + strobePhase[i] * 0.5) + energy * 0.55 + bass * 0.3);
+        strobeVals[i] = Math.max(strobeVals[i] * 0.86, drive);
+        const v = Math.min(1, strobeVals[i]);
+        if (v < 0.02) continue;
+        const x = pad + c * (cw + gap);
+        const y = top + r * (ch + gap);
+        const mix = (c / (STROBE_COLS - 1)) * 0.7 + (r / (STROBE_ROWS - 1)) * 0.3;
+        const [cr, cg, cb] = lerpColor(CYAN, ORANGE, mix);
+        ctx2d.fillStyle = `rgba(${cr},${cg},${cb},${Math.min(0.88, v) * 0.9})`;
+        roundRectPath(x, y, cw, ch, 8 * dpr);
+        ctx2d.fill();
+        if (v > 0.55) {
+          ctx2d.fillStyle = `rgba(255,255,255,${Math.min(0.75, (v - 0.55) * 1.1)})`;
+          roundRectPath(x + cw * 0.28, y + ch * 0.28, cw * 0.44, ch * 0.44, 5 * dpr);
+          ctx2d.fill();
+        }
+      }
+    }
+  }
+
+  // Thin spectrum bar footer (classic mode only; the wave stays dominant).
+  function drawSpectrumFooter(w, h, padX, padY, barW, gap, kick) {
+    const usable = h - padY * 2;
+    const punch = 1 + kick * 0.35 + ambientGlow * 0.2;
+    const specUsable = usable * 0.08;
+    const specBase = h - padY;
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const level = Math.min(1, smoothed[i] * punch);
+      const barH = Math.max(specUsable * 0.04, level * specUsable);
+      const x = padX + i * (barW + gap);
+      const y = specBase - barH;
+      const t = i / (BAR_COUNT - 1);
+      const [r, g, b] = lerpColor(CYAN, ORANGE, t);
+
+      const grad = ctx2d.createLinearGradient(x, y, x, specBase);
+      grad.addColorStop(0, `rgba(${r},${g},${b},1)`);
+      grad.addColorStop(0.45, `rgba(${r},${g},${b},0.85)`);
+      grad.addColorStop(1, `rgba(${r},${g},${b},0.2)`);
+      ctx2d.fillStyle = grad;
+      ctx2d.fillRect(x, y, barW, barH);
+
+      ctx2d.fillStyle = `rgba(255,255,255,${0.35 + level * 0.45})`;
+      ctx2d.fillRect(x, y, barW, Math.max(1.5 * dpr, barH * 0.04));
+    }
+  }
+
   function spectralColor(bass, mid, high, amp) {
     const sp = currentTheme.spectral;
     const b = Math.min(1, bass);
@@ -1344,43 +1685,37 @@
     }
     tickBeatCounterSoft(now);
 
-    // Always-on energy glow so the screen moves between beats
-    drawAmbientEnergy(w, h, energy, kick);
+    // Lighto 2.0: route the canvas visual through the active mode.
+    // Analysis (kick/bass/energy/beat/meters) above stays identical.
+    const vm = currentMode();
+    if (vm === "orbit") {
+      drawOrbitMode(w, h, now, kick, bass, energy);
+    } else if (vm === "scope") {
+      drawScopeMode(w, h, now, kick, energy);
+    } else if (vm === "nebula") {
+      drawNebulaMode(w, h, now, kick, bass, energy);
+    } else if (vm === "strobe") {
+      drawStrobeMode(w, h, now, kick, bass, energy);
+    } else {
+      // Classic: the original full CDJ view.
+      // Always-on energy glow so the screen moves between beats
+      drawAmbientEnergy(w, h, energy, kick);
 
-    // CDJ jog platter (under pulses so booms/rings stay on top)
-    drawJogPlatter(w, h, energy, kick, now);
+      // CDJ jog platter (under pulses so booms/rings stay on top)
+      drawJogPlatter(w, h, energy, kick, now);
 
-    // Layer 0: heavy 808 boom
-    draw808Booms(w, h, now);
+      // Layer 0: heavy 808 boom
+      draw808Booms(w, h, now);
 
-    // Layer 1: beat wave pulses
-    drawPulses(w, h, now);
+      // Layer 1: beat wave pulses
+      drawPulses(w, h, now);
 
-    // Serato spectral waveform panel (lower-middle band)
-    sampleAndPushWave(kick, bass, energy, sens, now);
-    drawSeratoWavePanel(w, h);
+      // Serato spectral waveform panel (lower-middle band)
+      sampleAndPushWave(kick, bass, energy, sens, now);
+      drawSeratoWavePanel(w, h);
 
-    // Spectrum bars along the bottom (thin footer; wave stays dominant)
-    const punch = 1 + kick * 0.35 + ambientGlow * 0.2;
-    const specUsable = usable * 0.08;
-    const specBase = h - padY;
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const level = Math.min(1, smoothed[i] * punch);
-      const barH = Math.max(specUsable * 0.04, level * specUsable);
-      const x = padX + i * (barW + gap);
-      const y = specBase - barH;
-      const t = i / (BAR_COUNT - 1);
-      const [r, g, b] = lerpColor(CYAN, ORANGE, t);
-
-      const grad = ctx2d.createLinearGradient(x, y, x, specBase);
-      grad.addColorStop(0, `rgba(${r},${g},${b},1)`);
-      grad.addColorStop(0.45, `rgba(${r},${g},${b},0.85)`);
-      grad.addColorStop(1, `rgba(${r},${g},${b},0.2)`);
-      ctx2d.fillStyle = grad;
-      ctx2d.fillRect(x, y, barW, barH);
-
-      ctx2d.fillStyle = `rgba(255,255,255,${0.35 + level * 0.45})`;
-      ctx2d.fillRect(x, y, barW, Math.max(1.5 * dpr, barH * 0.04));
+      // Spectrum bars along the bottom (thin footer; wave stays dominant)
+      drawSpectrumFooter(w, h, padX, padY, barW, gap, kick);
     }
 
     // FLX4 channel meters + Serato edge strips
@@ -1673,6 +2008,13 @@
     });
   }
 
+  if (els.modeBtn) {
+    els.modeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      cycleMode();
+    });
+  }
+
   document.addEventListener("click", (e) => {
     if (!themeSheetOpen) return;
     if (e.target.closest("#themeSheet") || e.target.closest("#colorsBtn")) return;
@@ -1708,12 +2050,13 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=13", { updateViaCache: "none" }).catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=14", { updateViaCache: "none" }).catch(() => {});
     });
   }
 
   buildThemeChips();
   restoreTheme();
+  restoreMode();
   initMeters();
   initBeatCounter();
   softResetBeatCounter();
