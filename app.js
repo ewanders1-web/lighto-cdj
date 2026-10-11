@@ -440,12 +440,16 @@
   let lastWaveBarMs = 0;
   let prevWaveAmp = 0;
 
-  // Rotating lighthouse / radar sweep (beam under the Serato wave)
-  let lhAngle = -Math.PI / 2;
+  // Lighthouse pulse waves (beat-synced rings + beam flares under the Serato wave)
+  let lhAngle = -Math.PI / 2; // faint slow accent drift
   let lhLastMs = 0;
-  let lhFlash = 0; // 0..1 beat punch ("light hose")
+  let lhStep = 0;
+  let lhFlash = 0; // 0..1 beat punch
+  const lhPulses = []; // { t0, strength, is808, angle, ring, beam }
+  const LH_MAX_PULSES = 8;
+  const LH_PULSE_MS = 1100;
   const lhRays = []; // { t0, angle, color, len, width, life }
-  const LH_MAX_RAYS = 36;
+  const LH_MAX_RAYS = 48;
 
   function setStatus(text, mode) {
     els.status.textContent = text;
@@ -851,7 +855,10 @@
     ctx2d.fillRect(0, 0, w, h);
   }
 
-  // --- Lighthouse / radar sweep -------------------------------------------
+  // --- Lighthouse pulse waves ----------------------------------------------
+  // Beat-synced: every beat / 808 fires an expanding Serato-colored ring with
+  // twin opposite beam flares riding it + short spectral rays at the hit.
+  // A very faint slow rotation only sets which way each new beam pair points.
   function lhBandColor(bass, mid, high) {
     const sp = currentTheme.spectral;
     const tot = bass + mid + high + 0.0001;
@@ -863,97 +870,152 @@
 
   function triggerLighthouse(strength, is808, now) {
     const s = Math.min(1.2, Math.max(0.2, strength || 0));
-    lhFlash = Math.min(1, lhFlash + (is808 ? 0.75 : 0.45) + s * 0.3);
+    lhFlash = Math.min(1, lhFlash + (is808 ? 0.7 : 0.4) + s * 0.25);
+
+    // 808 also calls spawnPulse -> merge near-simultaneous hits into one wave
+    const prev = lhPulses[lhPulses.length - 1];
+    if (prev && now - prev.t0 < 45) {
+      prev.strength = Math.min(1.2, Math.max(prev.strength, s));
+      prev.is808 = prev.is808 || is808;
+      return;
+    }
+
     const last = waveHist[(waveWrite - 1 + WAVE_COLS) % WAVE_COLS] || { bass: 0.4, mid: 0.3, high: 0.2 };
     const bass = 0.15 + (last.bass || 0) + (is808 ? 0.6 : 0);
     const mid = 0.12 + (last.mid || 0);
     const high = 0.1 + (last.high || 0);
-    const n = Math.round((is808 ? 7 : 3) + s * (is808 ? 6 : 4));
+    const sp = currentTheme.spectral;
+    // Ring color: Serato cyan->orange by strength (808 leans bass/orange)
+    const hue = is808 ? 0.9 : s > 0.75 ? 0.7 : s > 0.5 ? 0.4 : 0.12;
+    const ring = lerpColor(CYAN, ORANGE, hue);
+    // Beam pair steps around the dial each beat (quarter-ish turn + drift)
+    lhStep = (lhStep + 1) % 8;
+    const angle = lhAngle + lhStep * (Math.PI / 4);
+    lhPulses.push({
+      t0: now, strength: s, is808, angle, ring,
+      beam: lerpColor(is808 ? sp.bass : sp.mid, [255, 255, 255], 0.3),
+    });
+    while (lhPulses.length > LH_MAX_PULSES) lhPulses.shift();
+
+    // Short Serato spectral rays on the hit, spread all around the ring
+    const n = Math.round((is808 ? 10 : 6) + s * (is808 ? 8 : 5));
     for (let i = 0; i < n; i++) {
-      // Spray around both beam heads (lighthouse has twin lamps)
-      const head = lhAngle + (i % 2 ? Math.PI : 0);
+      const nearBeam = i % 3 === 0;
       lhRays.push({
         t0: now,
-        angle: head + (Math.random() - 0.5) * (is808 ? 0.9 : 0.55),
+        angle: nearBeam
+          ? angle + (i % 2 ? Math.PI : 0) + (Math.random() - 0.5) * 0.5
+          : Math.random() * Math.PI * 2,
         color: lhBandColor(bass, mid, high),
-        len: 0.18 + Math.random() * 0.22 + s * 0.12,
-        width: (1.2 + Math.random() * 2.2 + (is808 ? 1.4 : 0)),
-        life: 380 + Math.random() * 320 + (is808 ? 200 : 0),
+        len: 0.05 + Math.random() * 0.08 + s * 0.05,
+        width: 1.1 + Math.random() * 1.8 + (is808 ? 1.2 : 0),
+        life: 300 + Math.random() * 240 + (is808 ? 160 : 0),
       });
     }
     while (lhRays.length > LH_MAX_RAYS) lhRays.shift();
   }
 
   function drawLighthouse(w, h, cx, cy, now) {
-    // Speed: one full revolution per bar (4 beats) at detected BPM, else 120.
+    // Faint accent drift: one revolution every 8 bars (doesn't fight pulses)
     const bpm = bpmConfident && bpmDisplay > 0 ? bpmDisplay : 120;
-    const revMs = (60000 / bpm) * 4;
+    const revMs = (60000 / bpm) * 32;
     const dt = lhLastMs ? Math.min(80, now - lhLastMs) : 16;
     lhLastMs = now;
-    // Beat punch also nudges the sweep forward a touch
-    lhAngle = (lhAngle + (dt / revMs) * Math.PI * 2 * (1 + lhFlash * 0.35)) % (Math.PI * 2);
+    lhAngle = (lhAngle + (dt / revMs) * Math.PI * 2) % (Math.PI * 2);
 
-    const R = Math.hypot(w, h) * 0.62;
+    const minDim = Math.min(w, h);
+    const maxR = Math.hypot(w, h) * 0.5;
     const flash = lhFlash;
-    const halfW = 0.16 + flash * 0.07; // cone half-angle (rad)
-    const core = 0.07 + ambientGlow * 0.05 + flash * 0.3;
 
     ctx2d.save();
     ctx2d.globalCompositeOperation = "lighter";
+    ctx2d.lineCap = "round";
 
+    // Ghost beam accent (very dim, slow) — just a hint of a lighthouse
     for (let lamp = 0; lamp < 2; lamp++) {
       const a = lhAngle + lamp * Math.PI;
-      // Radar afterglow: trailing wedges fade behind the beam
-      for (let t = 4; t >= 0; t--) {
-        const off = t * halfW * 0.9;
-        const k = t === 0 ? 1 : 0.32 / t;
-        const g = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, R);
-        const c0 = t === 0 ? lerpColor(CYAN, [255, 255, 255], 0.35 + flash * 0.4) : CYAN;
-        g.addColorStop(0, rgbaOf(c0, core * k * 1.4));
-        g.addColorStop(0.35, rgbaOf(CYAN, core * k * 0.7));
-        g.addColorStop(0.7, rgbaOf(ORANGE, core * k * 0.35));
+      const g = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, maxR * 0.9);
+      g.addColorStop(0, rgbaOf(CYAN, 0.05 + ambientGlow * 0.03));
+      g.addColorStop(0.6, rgbaOf(CYAN, 0.015));
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx2d.fillStyle = g;
+      ctx2d.beginPath();
+      ctx2d.moveTo(cx, cy);
+      ctx2d.arc(cx, cy, maxR * 0.9, a - 0.09, a + 0.09);
+      ctx2d.closePath();
+      ctx2d.fill();
+    }
+
+    // Expanding beat waves
+    for (let i = lhPulses.length - 1; i >= 0; i--) {
+      const p = lhPulses[i];
+      const life = p.is808 ? LH_PULSE_MS * 1.25 : LH_PULSE_MS;
+      const age = (now - p.t0) / life;
+      if (age >= 1) { lhPulses.splice(i, 1); continue; }
+      const ease = 1 - Math.pow(1 - age, 2.2);
+      const fade = 1 - age;
+      const k = 0.55 + Math.min(1, p.strength) * 0.45;
+      const radius = (0.05 + ease * 0.95) * maxR * (0.8 + p.strength * 0.25);
+      const lineW = Math.max(1.5 * dpr, (p.is808 ? 9 : 6) * dpr * (1 - age * 0.75) * k);
+
+      // Ring: soft glow + crisp core
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx2d.strokeStyle = rgbaOf(p.ring, fade * 0.16 * k);
+      ctx2d.lineWidth = lineW * 3.4;
+      ctx2d.stroke();
+      ctx2d.strokeStyle = rgbaOf(p.ring, fade * 0.5 * k);
+      ctx2d.lineWidth = lineW;
+      ctx2d.stroke();
+
+      // Twin opposite beam wedges flaring outward with the ring
+      const halfW = 0.22 + (1 - ease) * 0.18 + (p.is808 ? 0.08 : 0);
+      for (let lamp = 0; lamp < 2; lamp++) {
+        const a = p.angle + lamp * Math.PI;
+        const inner = Math.max(0, radius * 0.25);
+        const g = ctx2d.createRadialGradient(cx, cy, inner, cx, cy, radius * 1.04);
+        g.addColorStop(0, "rgba(0,0,0,0)");
+        g.addColorStop(0.55, rgbaOf(CYAN, fade * fade * 0.08 * k));
+        g.addColorStop(0.92, rgbaOf(p.beam, fade * fade * 0.32 * k));
         g.addColorStop(1, "rgba(0,0,0,0)");
         ctx2d.fillStyle = g;
         ctx2d.beginPath();
         ctx2d.moveTo(cx, cy);
-        ctx2d.arc(cx, cy, R, a - halfW - off, a + halfW * (t === 0 ? 1 : 0.2) - off);
+        ctx2d.arc(cx, cy, radius * 1.04, a - halfW, a + halfW);
         ctx2d.closePath();
         ctx2d.fill();
+        // Bright arc where the beam meets the wave front
+        ctx2d.beginPath();
+        ctx2d.arc(cx, cy, radius, a - halfW * 0.7, a + halfW * 0.7);
+        ctx2d.strokeStyle = rgbaOf(lerpColor(p.beam, [255, 255, 255], 0.4), fade * 0.7 * k);
+        ctx2d.lineWidth = lineW * 1.3;
+        ctx2d.stroke();
       }
-      // Hot center line of the beam
-      ctx2d.strokeStyle = rgbaOf(lerpColor(CYAN, [255, 255, 255], 0.6), 0.1 + flash * 0.35);
-      ctx2d.lineWidth = (1 + flash * 2.5) * dpr;
-      ctx2d.beginPath();
-      ctx2d.moveTo(cx, cy);
-      ctx2d.lineTo(cx + Math.cos(a) * R * 0.8, cy + Math.sin(a) * R * 0.8);
-      ctx2d.stroke();
     }
 
-    // Serato-colored ray spatter shooting outward on beats
-    const minDim = Math.min(w, h);
+    // Short Serato spectral rays bursting from the hit
     for (let i = lhRays.length - 1; i >= 0; i--) {
       const ray = lhRays[i];
       const age = (now - ray.t0) / ray.life;
       if (age >= 1) { lhRays.splice(i, 1); continue; }
       const ease = 1 - Math.pow(1 - age, 2);
-      const r0 = minDim * (0.06 + ease * 0.55);
-      const r1 = r0 + minDim * ray.len * (1 - age * 0.5);
+      const r0 = minDim * (0.04 + ease * 0.3);
+      const r1 = r0 + minDim * ray.len * (1 - age * 0.6);
       const cos = Math.cos(ray.angle);
       const sin = Math.sin(ray.angle);
-      ctx2d.strokeStyle = rgbaOf(ray.color, 0.55 * (1 - age));
+      ctx2d.strokeStyle = rgbaOf(ray.color, 0.6 * (1 - age));
       ctx2d.lineWidth = ray.width * dpr * (1 - age * 0.4);
-      ctx2d.lineCap = "round";
       ctx2d.beginPath();
       ctx2d.moveTo(cx + cos * r0, cy + sin * r0);
       ctx2d.lineTo(cx + cos * r1, cy + sin * r1);
       ctx2d.stroke();
     }
 
-    // Lamp glow at the pivot
-    const lampR = minDim * (0.05 + flash * 0.05);
+    // Lamp glow at the center, punches on each hit
+    const lampR = minDim * (0.04 + flash * 0.06);
     const lg = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, lampR);
-    lg.addColorStop(0, `rgba(255,255,255,${0.18 + flash * 0.45})`);
-    lg.addColorStop(0.5, rgbaOf(CYAN, 0.12 + flash * 0.25));
+    lg.addColorStop(0, `rgba(255,255,255,${0.12 + flash * 0.5})`);
+    lg.addColorStop(0.5, rgbaOf(CYAN, 0.08 + flash * 0.28));
     lg.addColorStop(1, "rgba(0,0,0,0)");
     ctx2d.fillStyle = lg;
     ctx2d.beginPath();
@@ -961,7 +1023,7 @@
     ctx2d.fill();
 
     ctx2d.restore();
-    lhFlash *= 0.88;
+    lhFlash *= 0.86;
   }
 
   function drawJogPlatter(w, h, energy, kick, now) {
@@ -2001,6 +2063,8 @@
       last808 = 0;
       pulses.length = 0;
       booms.length = 0;
+      lhPulses.length = 0;
+      lhRays.length = 0;
       pulseFlash = 0;
       boomFlash = 0;
       ambientGlow = 0;
@@ -2065,6 +2129,8 @@
     timeData = null;
     pulses.length = 0;
     booms.length = 0;
+    lhPulses.length = 0;
+    lhRays.length = 0;
     pulseFlash = 0;
     boomFlash = 0;
     ambientGlow = 0;
@@ -2175,7 +2241,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=15", { updateViaCache: "none" }).catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=16", { updateViaCache: "none" }).catch(() => {});
     });
   }
 
