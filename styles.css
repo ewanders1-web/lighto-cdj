@@ -1061,3 +1061,30 @@ html, body {
   .sec-dots { gap: 8px; }
   .sec-dot { width: 6px; height: 6px; }
 }
+
+/* v19: Scale control (Nodes size/intensity) */
+.scale-ctl {
+  flex: 1 1 140px;
+  min-width: 120px;
+}
+.scale-ctl input[type="range"]::-webkit-slider-thumb {
+  background: var(--orange);
+  box-shadow: 0 0 10px rgba(var(--orange-rgb), 0.6);
+}
+.scale-ctl input[type="range"]::-moz-range-thumb {
+  background: var(--orange);
+}
+.scale-val {
+  min-width: 2.6em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--orange);
+  letter-spacing: 0.04em;
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .sens { gap: 6px; }
+  .scale-val { display: none; }
+}
+@media (max-width: 480px) {
+  .scale-val { display: none; }
+}

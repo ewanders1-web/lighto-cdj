@@ -3,6 +3,8 @@
 
   const THEME_KEY = "lighto-theme";
   const MODE_KEY = "lighto-mode";
+  const SCALE_KEY = "lighto-scale";
+  const SCALE_DEFAULT = 1.3;
   const BAR_COUNT = 48;
   const MAX_PULSES = 6;
   const PULSE_LIFE_MS = 720;
@@ -24,6 +26,8 @@
     themeSheet: document.getElementById("themeSheet"),
     themeChips: document.getElementById("themeChips"),
     sensitivity: document.getElementById("sensitivity"),
+    scaleCtl: document.getElementById("scaleCtl"),
+    scaleVal: document.getElementById("scaleVal"),
     status: document.getElementById("status"),
     display: document.getElementById("display"),
     flxMeters: document.getElementById("flxMeters"),
@@ -1486,6 +1490,36 @@
     }
   }
 
+  // ---- v19: user Scale (drives Nodes size/intensity, gently Sonar ring size) ----
+  let userScale = SCALE_DEFAULT;
+  function setUserScale(v, persist) {
+    const n = Math.min(2, Math.max(0.5, parseFloat(v)));
+    userScale = isFinite(n) ? n : SCALE_DEFAULT;
+    if (els.scaleCtl && parseFloat(els.scaleCtl.value) !== userScale) els.scaleCtl.value = String(userScale);
+    if (els.scaleVal) els.scaleVal.textContent = userScale.toFixed(2);
+    if (persist) {
+      try { localStorage.setItem(SCALE_KEY, String(userScale)); } catch (_) {}
+    }
+  }
+  function restoreUserScale() {
+    let v = SCALE_DEFAULT;
+    try {
+      const saved = parseFloat(localStorage.getItem(SCALE_KEY));
+      if (isFinite(saved)) v = saved;
+    } catch (_) {}
+    setUserScale(v, false);
+  }
+  // Hotter Serato color: push saturation away from luma, then gain.
+  function punchColor(c, gain) {
+    const l = (c[0] + c[1] + c[2]) / 3;
+    const sat = 1.35;
+    return [
+      Math.max(0, Math.min(255, Math.round((l + (c[0] - l) * sat) * gain))),
+      Math.max(0, Math.min(255, Math.round((l + (c[1] - l) * sat) * gain))),
+      Math.max(0, Math.min(255, Math.round((l + (c[2] - l) * sat) * gain))),
+    ];
+  }
+
   // ---- Lighto v17: Nodes + Sonar modes ----
   const NODE_RING_LIFE = 1700;
   const NODE_MAX_RINGS = 10;
@@ -1558,19 +1592,28 @@
     ctx2d.closePath();
   }
 
-  // Nodes: two big wave nodes, left = CH1 / bass, right = CH2 / mid-high.
+  // Nodes (v19 "harder"): two big wave nodes, left = CH1 / bass, right = CH2 / mid-high.
+  // userScale (0.5-2) drives size + intensity; kick/808 add squash-bounce.
+  let nodeBounceL = 0;
+  let nodeBounceR = 0;
   function drawNodesMode(w, h, now, kick, bass, energy) {
     const [lo, md, hi] = bandLevels();
-    const cy = h * 0.44;
+    const S = userScale;
+    const I = 0.55 + S * 0.45; // intensity multiplier (1.0 at scale 1, ~1.14 at 1.3)
+    const cy = h * 0.45;
     const nodes = [
-      { cx: w * 0.27, lvl: Math.min(1, meterCh1 * 0.55 + lo * 0.6 + kick * 0.5), lo: 0, hi: 0.45, rot: Math.PI },
-      { cx: w * 0.73, lvl: Math.min(1, meterCh2 * 0.55 + (md + hi) * 0.45 + energy * 0.3), lo: 0.35, hi: 1, rot: 0 },
+      { cx: w * 0.27, lvl: Math.min(1, (meterCh1 * 0.6 + lo * 0.7 + kick * 0.65) * I), lo: 0, hi: 0.45, rot: Math.PI },
+      { cx: w * 0.73, lvl: Math.min(1, (meterCh2 * 0.6 + (md + hi) * 0.5 + energy * 0.35 + kick * 0.25) * I), lo: 0.35, hi: 1, rot: 0 },
     ];
-    nodeGlowL = Math.max(nodeGlowL * 0.9, nodes[0].lvl);
-    nodeGlowR = Math.max(nodeGlowR * 0.9, nodes[1].lvl);
-    const baseR = Math.min(w * 0.16, h * 0.2);
+    nodeGlowL = Math.max(nodeGlowL * 0.88, nodes[0].lvl);
+    nodeGlowR = Math.max(nodeGlowR * 0.88, nodes[1].lvl);
+    // Kick bounce: fast attack, springy decay. 808 booms slam harder (set below).
+    nodeBounceL = Math.max(nodeBounceL * 0.86, kick * kick * 0.9 + bass * 0.2);
+    nodeBounceR = Math.max(nodeBounceR * 0.86, kick * kick * 0.55 + energy * 0.15);
+    // Bigger default body (was min(w*.16,h*.2)); scale grows it, capped so dual nodes never fully merge.
+    const baseR = Math.min(w * 0.205, h * 0.27) * Math.min(1.45, 0.62 + S * 0.38);
     const sy = Math.min(1.25, Math.max(0.85, (h * 0.5) / (w * 0.5)));
-    const maxR = Math.max(w * 0.5, h * 0.5);
+    const maxR = Math.max(w * 0.55, h * 0.55) * (0.85 + S * 0.15);
 
     // Spawn rings: both nodes ring on a beat, the hotter side rings stronger.
     const p = newestSince(pulses, nodesSeenPulse);
@@ -1578,63 +1621,71 @@
       nodesSeenPulse = p.t0;
       for (let s = 0; s < 2; s++) {
         const n = nodes[s];
-        const bias = s === 0 ? 0.6 + lo * 0.6 : 0.5 + (md + hi) * 0.5;
-        nodeRings.push({ t0: now, side: s, strength: Math.min(1, p.strength * bias + n.lvl * 0.3), snap: spectrumSnap(n.lo, n.hi), boom: false });
+        const bias = s === 0 ? 0.75 + lo * 0.7 : 0.65 + (md + hi) * 0.6;
+        nodeRings.push({ t0: now, side: s, strength: Math.min(1.25, (p.strength * bias + n.lvl * 0.4) * I), snap: spectrumSnap(n.lo, n.hi), boom: false });
       }
+      nodeBounceL = Math.max(nodeBounceL, 0.55 * p.strength);
+      nodeBounceR = Math.max(nodeBounceR, 0.4 * p.strength);
     }
     const b = newestSince(booms, nodesSeenBoom);
     if (b) {
       nodesSeenBoom = b.t0;
-      nodeRings.push({ t0: now, side: 0, strength: 1, snap: spectrumSnap(0, 0.45), boom: true });
-      nodeRings.push({ t0: now, side: 1, strength: 0.8, snap: spectrumSnap(0.35, 1), boom: true });
+      nodeRings.push({ t0: now, side: 0, strength: 1.3, snap: spectrumSnap(0, 0.45), boom: true });
+      nodeRings.push({ t0: now, side: 1, strength: 1.05, snap: spectrumSnap(0.35, 1), boom: true });
+      nodeBounceL = 1.15;
+      nodeBounceR = 0.9;
     }
     while (nodeRings.length > NODE_MAX_RINGS * 2) nodeRings.shift();
+    const bounces = [nodeBounceL, nodeBounceR];
+    const bAmp = 0.22 * I; // how far a full kick swells the body
 
-    // Ambient wash behind each node + soft link glow between them
+    // Ambient wash behind each node + link glow between them (hotter)
     const glows = [nodeGlowL, nodeGlowR];
     for (let s = 0; s < 2; s++) {
       const n = nodes[s];
       const col = s === 0 ? CYAN : ORANGE;
-      const g = ctx2d.createRadialGradient(n.cx, cy, 0, n.cx, cy, baseR * 3.2);
-      g.addColorStop(0, rgbaOf(col, 0.1 + glows[s] * 0.22));
+      const wr = baseR * (3.2 + bounces[s] * 0.8);
+      const g = ctx2d.createRadialGradient(n.cx, cy, 0, n.cx, cy, wr);
+      g.addColorStop(0, rgbaOf(col, Math.min(0.6, (0.14 + glows[s] * 0.3 + bounces[s] * 0.12) * I)));
       g.addColorStop(1, "rgba(0,0,0,0)");
       ctx2d.fillStyle = g;
-      ctx2d.fillRect(n.cx - baseR * 3.2, cy - baseR * 3.2, baseR * 6.4, baseR * 6.4);
+      ctx2d.fillRect(n.cx - wr, cy - wr, wr * 2, wr * 2);
     }
     const link = ctx2d.createLinearGradient(nodes[0].cx, 0, nodes[1].cx, 0);
-    link.addColorStop(0, rgbaOf(CYAN, 0.15 + nodeGlowL * 0.35));
-    link.addColorStop(0.5, `rgba(255,255,255,${0.06 + kick * 0.25})`);
-    link.addColorStop(1, rgbaOf(ORANGE, 0.15 + nodeGlowR * 0.35));
+    link.addColorStop(0, rgbaOf(CYAN, 0.2 + nodeGlowL * 0.45));
+    link.addColorStop(0.5, `rgba(255,255,255,${0.08 + kick * 0.4})`);
+    link.addColorStop(1, rgbaOf(ORANGE, 0.2 + nodeGlowR * 0.45));
     ctx2d.fillStyle = link;
-    const lh = Math.max(2 * dpr, (3 + energy * 10) * dpr);
+    const lh = Math.max(2 * dpr, (3 + energy * 12 + kick * 8) * S * dpr);
     ctx2d.fillRect(nodes[0].cx, cy - lh / 2, nodes[1].cx - nodes[0].cx, lh);
     // center playhead
-    ctx2d.fillStyle = `rgba(255,255,255,${0.35 + kick * 0.5})`;
+    ctx2d.fillStyle = `rgba(255,255,255,${0.35 + kick * 0.6})`;
     ctx2d.fillRect(w * 0.5 - 1 * dpr, cy - baseR * 1.4, 2 * dpr, baseR * 2.8);
 
     ctx2d.save();
     ctx2d.globalCompositeOperation = "lighter";
 
-    // Expanding spectral wave rings from each node
+    // Expanding spectral wave rings from each node (thicker, brighter, punchier color)
     for (let i = nodeRings.length - 1; i >= 0; i--) {
       const ring = nodeRings[i];
-      const life = ring.boom ? NODE_RING_LIFE * 1.2 : NODE_RING_LIFE;
+      const life = ring.boom ? NODE_RING_LIFE * 1.25 : NODE_RING_LIFE;
       const age = (now - ring.t0) / life;
       if (age >= 1) { nodeRings.splice(i, 1); continue; }
       const n = nodes[ring.side];
-      const ease = 1 - Math.pow(1 - age, 2.4);
+      const ease = 1 - Math.pow(1 - age, 2.6);
       const r = baseR + ease * (maxR - baseR);
-      const depth = baseR * (0.5 + ring.strength * 0.9) * (1 - age * 0.5);
-      const alpha = (1 - age) * (0.35 + ring.strength * 0.55);
+      const depth = baseR * (0.6 + ring.strength * 1.1) * (1 - age * 0.45);
+      const alpha = Math.min(1, (1 - age) * (0.45 + ring.strength * 0.6));
       const segs = SNAP_N;
-      const lw = Math.max(2 * dpr, (ring.boom ? 16 : 9) * (1 - age * 0.7) * dpr);
-      // colored spectral segments, mirrored top/bottom
+      const lw = Math.max(2.5 * dpr, (ring.boom ? 26 : 15) * (0.75 + S * 0.25) * (1 - age * 0.65) * dpr);
+      const flashAge = age < 0.12 ? 1 - age / 0.12 : 0; // white-hot leading edge on birth
       for (let k = 0; k < segs; k++) {
         const t = ring.side === 0 ? (k / segs) * 0.45 : 0.35 + (k / segs) * 0.65;
         const v = ring.snap[k];
-        const [cr, cg, cb] = ring.boom ? BOOM : bandColorAt(t, v + 0.3);
-        ctx2d.strokeStyle = `rgba(${cr},${cg},${cb},${alpha * (0.45 + v * 0.55)})`;
-        ctx2d.lineWidth = lw * (0.5 + v);
+        const base = ring.boom ? BOOM : bandColorAt(t, v + 0.45);
+        const [cr, cg, cb] = punchColor(base, 1.1 + v * 0.35 + flashAge * 0.3);
+        ctx2d.strokeStyle = `rgba(${cr},${cg},${cb},${Math.min(1, alpha * (0.55 + v * 0.6))})`;
+        ctx2d.lineWidth = lw * (0.55 + v * 1.1);
         for (const dir of [1, -1]) {
           const a0 = n.rot + dir * (k / segs) * Math.PI;
           const a1 = n.rot + dir * ((k + 1) / segs) * Math.PI;
@@ -1644,29 +1695,37 @@
           ctx2d.stroke();
         }
       }
+      // thin bright core line riding each ring for a sharper "hit"
+      ctx2d.beginPath();
+      ctx2d.ellipse(n.cx, cy, r, r * sy, 0, 0, Math.PI * 2);
+      ctx2d.strokeStyle = ring.boom ? rgbaOf(BOOM, alpha * 0.7) : `rgba(255,255,255,${alpha * (0.18 + flashAge * 0.5)})`;
+      ctx2d.lineWidth = Math.max(1.5, (ring.boom ? 4 : 2) * dpr);
+      ctx2d.stroke();
     }
 
-    // Live node bodies: spectral blob + time-domain wave ring
+    // Live node bodies: spectral blob + time-domain wave ring, with kick squash-bounce
     for (let s = 0; s < 2; s++) {
       const n = nodes[s];
+      const bo = bounces[s];
       const snap = spectrumSnap(n.lo, n.hi);
-      const r0 = baseR * (0.82 + n.lvl * 0.35);
+      const swell = 1 + bo * bAmp;
+      const r0 = baseR * (0.86 + n.lvl * 0.42) * swell;
+      const bsy = sy * (1 - bo * 0.07); // slight vertical squash on the hit
       const rot = n.rot - Math.PI / 2;
-      // filled spectral blob
-      traceSpectralRing(n.cx, cy, r0 * 0.75, snap, baseR * 0.9, 1, sy, rot);
+      traceSpectralRing(n.cx, cy, r0 * 0.75, snap, baseR * (1.0 + bo * 0.35) * I, 1 + bo * 0.04, bsy, rot);
       const fill = ctx2d.createRadialGradient(n.cx, cy, 0, n.cx, cy, r0 * 1.6);
-      const cA = bandColorAt(s === 0 ? 0.1 : 0.85, 0.9);
-      const cB = bandColorAt(s === 0 ? 0.35 : 0.55, 0.7);
-      fill.addColorStop(0, `rgba(255,255,255,${0.18 + n.lvl * 0.3})`);
-      fill.addColorStop(0.35, `rgba(${cA[0]},${cA[1]},${cA[2]},${0.35 + n.lvl * 0.4})`);
-      fill.addColorStop(1, `rgba(${cB[0]},${cB[1]},${cB[2]},0.08)`);
+      const cA = punchColor(bandColorAt(s === 0 ? 0.1 : 0.85, 1), 1.2);
+      const cB = punchColor(bandColorAt(s === 0 ? 0.35 : 0.55, 0.85), 1.1);
+      fill.addColorStop(0, `rgba(255,255,255,${Math.min(0.85, 0.22 + n.lvl * 0.35 + bo * 0.25)})`);
+      fill.addColorStop(0.35, `rgba(${cA[0]},${cA[1]},${cA[2]},${Math.min(0.95, 0.45 + n.lvl * 0.45)})`);
+      fill.addColorStop(1, `rgba(${cB[0]},${cB[1]},${cB[2]},0.14)`);
       ctx2d.fillStyle = fill;
       ctx2d.fill();
-      ctx2d.strokeStyle = rgbaOf(s === 0 ? CYAN : ORANGE, 0.5 + n.lvl * 0.5);
-      ctx2d.lineWidth = 2 * dpr;
+      ctx2d.strokeStyle = rgbaOf(s === 0 ? CYAN : ORANGE, Math.min(1, 0.6 + n.lvl * 0.5));
+      ctx2d.lineWidth = (2.5 + bo * 2) * dpr;
       ctx2d.stroke();
 
-      // oscilloscope ring from that channel's time data
+      // oscilloscope ring from that channel's time data (thicker, double-stroked glow)
       const td = stereoMode && timeL && timeR ? (s === 0 ? timeL : timeR) : timeData;
       if (td) {
         const steps = 96;
@@ -1677,22 +1736,26 @@
           const idx = Math.floor((k / steps) * (td.length - 1));
           const v = (td[idx] - 128) / 128;
           const a = (k / steps) * Math.PI * 2;
-          const rad = rr + v * baseR * (0.6 + n.lvl * 1.4);
+          const rad = rr + v * baseR * (0.8 + n.lvl * 1.8 + bo * 0.6) * I;
           const x = n.cx + Math.cos(a) * rad;
-          const y = cy + Math.sin(a) * rad * sy;
+          const y = cy + Math.sin(a) * rad * bsy;
           if (i === 0) ctx2d.moveTo(x, y);
           else ctx2d.lineTo(x, y);
         }
         ctx2d.closePath();
-        ctx2d.strokeStyle = rgbaOf(s === 0 ? CYAN : ORANGE, 0.35 + n.lvl * 0.5);
-        ctx2d.lineWidth = Math.max(1.5, 2.2 * dpr);
+        const oc = s === 0 ? CYAN : ORANGE;
+        ctx2d.strokeStyle = rgbaOf(oc, Math.min(0.5, 0.12 + n.lvl * 0.3));
+        ctx2d.lineWidth = Math.max(4, (7 + bo * 6) * dpr);
+        ctx2d.stroke();
+        ctx2d.strokeStyle = rgbaOf(oc, Math.min(1, 0.5 + n.lvl * 0.5));
+        ctx2d.lineWidth = Math.max(2, (3 + bo * 2) * dpr);
         ctx2d.stroke();
       }
 
-      // core
+      // core (pops on kick)
       ctx2d.beginPath();
-      ctx2d.arc(n.cx, cy, baseR * (0.12 + n.lvl * 0.1), 0, Math.PI * 2);
-      ctx2d.fillStyle = `rgba(255,255,255,${0.4 + n.lvl * 0.5})`;
+      ctx2d.arc(n.cx, cy, baseR * (0.13 + n.lvl * 0.12 + bo * 0.08), 0, Math.PI * 2);
+      ctx2d.fillStyle = `rgba(255,255,255,${Math.min(1, 0.5 + n.lvl * 0.5)})`;
       ctx2d.fill();
     }
     ctx2d.restore();
@@ -1703,8 +1766,9 @@
     const cx = w * 0.5;
     const cy = h * 0.46;
     const minDim = Math.min(w, h);
-    const maxR = Math.hypot(Math.max(cx, w - cx), Math.max(cy, h - cy)) * 0.92;
-    const gridR = minDim * 0.48;
+    const sonarS = 0.8 + userScale * 0.2; // gentle: 0.9 .. 1.2
+    const maxR = Math.hypot(Math.max(cx, w - cx), Math.max(cy, h - cy)) * 0.92 * sonarS;
+    const gridR = minDim * 0.48 * Math.min(1.08, sonarS);
 
     // Spawn pings
     const p = newestSince(pulses, sonarSeenPulse);
@@ -1803,7 +1867,7 @@
       ctx2d.lineWidth = Math.max(1.5, (ring.boom ? 10 : 2.5) * (1 - age * 0.6) * dpr);
       ctx2d.stroke();
       // spectral arcs (spectrum wraps around the ring, mirrored L/R)
-      const lw = Math.max(1.5, 6 * (1 - age * 0.7) * dpr);
+      const lw = Math.max(1.5, 6 * sonarS * (1 - age * 0.7) * dpr);
       for (let k = 0; k < segs; k++) {
         const v = ring.snap[k];
         if (v < 0.06) continue;
@@ -2912,13 +2976,17 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=18", { updateViaCache: "none" }).catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=19", { updateViaCache: "none" }).catch(() => {});
     });
   }
 
   buildThemeChips();
   restoreTheme();
   restoreMode();
+  restoreUserScale();
+  if (els.scaleCtl) {
+    els.scaleCtl.addEventListener("input", () => setUserScale(els.scaleCtl.value, true));
+  }
   initMeters();
   initBeatCounter();
   softResetBeatCounter();
