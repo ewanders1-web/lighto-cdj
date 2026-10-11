@@ -308,6 +308,7 @@
     { id: "strobe", name: "Strobe" },
     { id: "nodes", name: "Nodes" },
     { id: "sonar", name: "Sonar" },
+    { id: "evolve", name: "Evolve" },
   ];
   let modeIndex = 0;
   let modeToastTimer = 0;
@@ -1860,6 +1861,293 @@
     ctx2d.restore();
   }
 
+  // ---- Lighto v18: Evolve mode ----
+  // "What they just struck... what the fuck... they just shrug."
+  // Nested polygon strata that strain inward between beats (tension), snap
+  // taut on every beat ("struck"), glitch-stutter on loud mid/high spikes,
+  // then droop in a soft shrug. Consecutive kicks grow new layers; silence
+  // collapses the outer half.
+  const EVO_MAX_LAYERS = 9;
+  const evoLayers = []; // { born, sides, rot, spin, disp, vel, t, dying }
+  let evoSeenPulse = 0;
+  let evoSeenBoom = 0;
+  let evoLastPulse = 0;
+  let evoStreak = 0;
+  let evoTension = 0;
+  let evoSnap = 0;
+  let evoShrug = 0;
+  let evoCollapsed = true;
+  let evoMhAvg = 0;
+  let evoGlitchUntil = 0;
+  let evoGlitchAmt = 0;
+  let evoGlitchSeed = 0;
+  let evoGlitchStep = 0;
+  let evoLastNow = 0;
+
+  function evoAddLayer(now) {
+    const n = evoLayers.filter((l) => !l.dying).length;
+    if (n >= EVO_MAX_LAYERS) return;
+    evoLayers.push({
+      born: now,
+      sides: 3 + (n % 5),
+      rot: Math.random() * Math.PI * 2,
+      spin: (n % 2 ? -1 : 1) * (0.0012 + n * 0.0004),
+      disp: 0.6,
+      vel: 0,
+      t: n / (EVO_MAX_LAYERS - 1),
+      dying: 0,
+      fade: 0,
+      fall: 0,
+    });
+  }
+
+  function drawEvolveMode(w, h, now, kick, bass, energy) {
+    const [lo, md, hi] = bandLevels();
+    const dt = Math.min(0.05, Math.max(0.001, (now - (evoLastNow || now - 16)) / 1000));
+    evoLastNow = now;
+    const f60 = dt * 60;
+    const cx = w * 0.5;
+    const cy = h * 0.45;
+    const minDim = Math.min(w, h);
+    const unit = minDim * 0.05;
+
+    // --- events: struck (beats) ---
+    const p = newestSince(pulses, evoSeenPulse);
+    if (p) {
+      evoSeenPulse = p.t0;
+      evoStreak = now - evoLastPulse < 1150 ? evoStreak + 1 : 1;
+      evoLastPulse = now;
+      evoCollapsed = false;
+      evoSnap = Math.max(evoSnap, 0.55 + p.strength * 0.45);
+      evoShrug = Math.max(evoShrug, 0.25 + p.strength * 0.15);
+      const live = evoLayers.filter((l) => !l.dying).length;
+      const target = Math.min(EVO_MAX_LAYERS, 1 + Math.floor(evoStreak / 2));
+      if (live < target) evoAddLayer(now);
+      for (const l of evoLayers) l.vel += (0.9 + p.strength * 1.4) * (0.6 + l.t * 0.8);
+    }
+    const b = newestSince(booms, evoSeenBoom);
+    if (b) {
+      evoSeenBoom = b.t0;
+      evoLastPulse = now;
+      evoCollapsed = false;
+      evoSnap = 1;
+      evoShrug = Math.max(evoShrug, 0.5);
+      evoAddLayer(now);
+      for (const l of evoLayers) l.vel += 2.6;
+    }
+    if (!evoLayers.length) evoAddLayer(now);
+
+    // --- tension builds with the streak, bleeds off otherwise ---
+    const tensionTarget = Math.min(1, evoStreak / 14 + energy * 0.35);
+    evoTension += (tensionTarget - evoTension) * Math.min(1, 0.03 * f60);
+
+    // --- silence: partial collapse + big shrug ---
+    if (!evoCollapsed && now - evoLastPulse > 1700 && energy < 0.14) {
+      evoCollapsed = true;
+      const live = evoLayers.filter((l) => !l.dying);
+      const drop = Math.ceil(live.length / 2);
+      for (let i = live.length - drop; i < live.length; i++) if (i > 0) live[i].dying = now;
+      evoStreak = Math.floor(evoStreak / 3);
+      evoShrug = 1;
+    }
+
+    // --- "what the fuck": glitch stutter on loud mid/high spikes ---
+    const mh = md * 0.55 + hi * 0.45;
+    evoMhAvg += (mh - evoMhAvg) * Math.min(1, 0.04 * f60);
+    if (mh > 0.32 && mh > evoMhAvg * 1.3 + 0.03 && now > evoGlitchUntil - 60) {
+      evoGlitchUntil = now + 160 + Math.random() * 180;
+      evoGlitchAmt = Math.min(1, 0.5 + (mh - evoMhAvg) * 3);
+    }
+    const glitching = now < evoGlitchUntil;
+    if (!glitching) evoGlitchAmt *= Math.pow(0.8, f60);
+    const step = Math.floor(now / 55); // stutter quantum
+    if (step !== evoGlitchStep) { evoGlitchStep = step; evoGlitchSeed = Math.random() * 1000; }
+
+    evoSnap *= Math.pow(0.84, f60);
+    evoShrug *= Math.pow(0.972, f60);
+
+    // --- background: tension field (vertical strain lines) ---
+    const bg = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.7);
+    bg.addColorStop(0, rgbaOf(ORANGE, 0.03 + evoTension * 0.08 + evoSnap * 0.1));
+    bg.addColorStop(0.6, rgbaOf(CYAN, 0.02 + evoTension * 0.04));
+    bg.addColorStop(1, "rgba(0,0,0,0.3)");
+    ctx2d.fillStyle = bg;
+    ctx2d.fillRect(0, 0, w, h);
+
+    const droop = evoShrug * unit * 1.6; // whole structure sinks on the shrug
+    const ccy = cy + droop;
+
+    ctx2d.save();
+    ctx2d.globalCompositeOperation = "lighter";
+
+    // strain lines: pulled toward center as tension rises, straighten on snap
+    const lines = 14;
+    for (let i = 0; i < lines; i++) {
+      const x = (w * (i + 0.5)) / lines;
+      const pull = (cx - x) * evoTension * 0.18 * (1 - evoSnap);
+      ctx2d.beginPath();
+      ctx2d.moveTo(x, 0);
+      ctx2d.quadraticCurveTo(x + pull, ccy + evoShrug * unit * 2, x, h);
+      const t = i / (lines - 1);
+      const [cr, cg, cb] = bandColorAt(t, 0.5);
+      ctx2d.strokeStyle = `rgba(${cr},${cg},${cb},${0.03 + evoTension * 0.07 + evoSnap * 0.12})`;
+      ctx2d.lineWidth = Math.max(1, dpr);
+      ctx2d.stroke();
+    }
+
+    // --- strata ---
+    for (let i = evoLayers.length - 1; i >= 0; i--) {
+      const l = evoLayers[i];
+      // damped spring: snaps out, settles back
+      const acc = -38 * l.disp - 7.5 * l.vel;
+      l.vel += acc * dt;
+      l.disp += l.vel * dt;
+      l.rot += l.spin * f60 * (1 + evoTension * 2.5) * (1 - evoShrug * 0.6);
+      let fade = Math.min(1, (now - l.born) / 500);
+      let fall = 0;
+      if (l.dying) {
+        const da = (now - l.dying) / 1300;
+        if (da >= 1) { evoLayers.splice(i, 1); continue; }
+        fade *= 1 - da;
+        fall = da * da * h * 0.25;
+      }
+      l.fade = fade;
+      l.fall = fall;
+    }
+
+    const live = evoLayers.length;
+    const layerPts = [];
+    for (let i = 0; i < live; i++) {
+      const l = evoLayers[i];
+      const fade = l.fade;
+      const fall = l.fall;
+      const slot = i + 1;
+      const r = unit * (1.2 + slot * 1.05) * (1 + l.disp * 0.12) * (1 + bass * 0.08);
+      const strain = evoTension * (1 - evoSnap) * 0.32; // edges bow inward
+      const yC = ccy + fall + evoShrug * unit * 0.4 * slot * 0.3;
+      const verts = [];
+      for (let k = 0; k < l.sides; k++) {
+        const a = l.rot + (k / l.sides) * Math.PI * 2 - Math.PI / 2;
+        // shrug: sides lift ("shoulders") while the bottom sags
+        const sh = evoShrug * unit * 0.5 * (-Math.abs(Math.cos(a)) + Math.max(0, Math.sin(a)));
+        verts.push([cx + Math.cos(a) * r, yC + Math.sin(a) * r * 0.92 + sh]);
+      }
+      layerPts.push({ verts, yC, fade, l });
+
+      const [cr, cg, cb] = bandColorAt(l.t, 0.6 + evoTension * 0.4);
+      const jit = glitching ? evoGlitchAmt * unit * 0.25 : 0;
+      const passes = glitching ? [[-jit, CYAN], [jit, ORANGE]] : [[0, null]];
+      for (const [ox, gc] of passes) {
+        ctx2d.beginPath();
+        for (let k = 0; k <= l.sides; k++) {
+          const v = verts[k % l.sides];
+          if (k === 0) { ctx2d.moveTo(v[0] + ox, v[1]); continue; }
+          const pv = verts[k - 1];
+          const mx = (pv[0] + v[0]) / 2;
+          const my = (pv[1] + v[1]) / 2;
+          const qx = mx + (cx - mx) * strain;
+          const qy = my + (yC - my) * strain + evoShrug * unit * 0.6;
+          ctx2d.quadraticCurveTo(qx + ox, qy, v[0] + ox, v[1]);
+        }
+        const a = fade * (0.35 + evoTension * 0.35 + evoSnap * 0.3);
+        ctx2d.strokeStyle = gc ? rgbaOf(gc, a * 0.8) : `rgba(${cr},${cg},${cb},${a})`;
+        ctx2d.lineWidth = Math.max(1.5, (1.5 + evoSnap * 4 + evoTension * 2) * dpr * (0.7 + l.t * 0.5));
+        ctx2d.stroke();
+      }
+      // vertex knots, white-hot on the strike
+      for (const v of verts) {
+        const s = (2 + evoSnap * 5 + evoTension * 2) * dpr;
+        ctx2d.fillStyle = `rgba(255,255,255,${fade * (0.25 + evoSnap * 0.7)})`;
+        ctx2d.fillRect(v[0] - s / 2, v[1] - s / 2, s, s);
+      }
+    }
+
+    // tendons between adjacent strata: taut with tension, slack on shrug
+    for (let i = 1; i < layerPts.length; i++) {
+      const A = layerPts[i - 1];
+      const B = layerPts[i];
+      const fade = Math.min(A.fade, B.fade);
+      for (let k = 0; k < B.verts.length; k++) {
+        const vb = B.verts[k];
+        const va = A.verts[k % A.verts.length];
+        const sag = evoShrug * unit * 1.2 + (1 - evoTension) * unit * 0.4;
+        ctx2d.beginPath();
+        ctx2d.moveTo(va[0], va[1]);
+        ctx2d.quadraticCurveTo((va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2 + sag, vb[0], vb[1]);
+        ctx2d.strokeStyle = evoSnap > 0.4
+          ? `rgba(255,255,255,${fade * evoSnap * 0.5})`
+          : rgbaOf(ORANGE, fade * (0.06 + evoTension * 0.22));
+        ctx2d.lineWidth = Math.max(1, dpr);
+        ctx2d.stroke();
+      }
+    }
+
+    // core: a vertical slit that opens on the strike
+    const coreH = unit * (0.6 + evoSnap * 2.2 + kick * 0.8);
+    const coreW = unit * (0.12 + evoTension * 0.25);
+    const cg = ctx2d.createLinearGradient(cx, ccy - coreH, cx, ccy + coreH);
+    cg.addColorStop(0, "rgba(0,0,0,0)");
+    cg.addColorStop(0.5, `rgba(255,255,255,${0.35 + evoSnap * 0.6})`);
+    cg.addColorStop(1, "rgba(0,0,0,0)");
+    ctx2d.fillStyle = cg;
+    ctx2d.beginPath();
+    ctx2d.moveTo(cx, ccy - coreH);
+    ctx2d.lineTo(cx + coreW, ccy);
+    ctx2d.lineTo(cx, ccy + coreH);
+    ctx2d.lineTo(cx - coreW, ccy);
+    ctx2d.closePath();
+    ctx2d.fill();
+
+    // shrug horizon: shoulders lift at the edges, then settle
+    const hy = h * 0.82;
+    const lift = evoShrug * h * 0.12;
+    ctx2d.beginPath();
+    const hs = 60;
+    for (let i = 0; i <= hs; i++) {
+      const t = i / hs;
+      const x = t * w;
+      const e = Math.pow(Math.abs(t - 0.5) * 2, 2.2);
+      const y = hy - e * lift + Math.sin(t * Math.PI) * evoShrug * unit * 0.5;
+      if (i === 0) ctx2d.moveTo(x, y);
+      else ctx2d.lineTo(x, y);
+    }
+    const hg = ctx2d.createLinearGradient(0, 0, w, 0);
+    hg.addColorStop(0, rgbaOf(CYAN, 0.15 + evoShrug * 0.5));
+    hg.addColorStop(0.5, `rgba(255,255,255,${0.08 + evoSnap * 0.3})`);
+    hg.addColorStop(1, rgbaOf(ORANGE, 0.15 + evoShrug * 0.5));
+    ctx2d.strokeStyle = hg;
+    ctx2d.lineWidth = Math.max(1.5, 2 * dpr);
+    ctx2d.stroke();
+
+    // streak tally (layers earned) along the horizon
+    const marks = Math.min(16, evoStreak);
+    for (let i = 0; i < marks; i++) {
+      const x = cx + (i - (marks - 1) / 2) * unit * 0.45;
+      const [cr, cg2, cb] = bandColorAt(i / 15, 0.8);
+      ctx2d.fillStyle = `rgba(${cr},${cg2},${cb},${0.35 + evoTension * 0.5})`;
+      ctx2d.fillRect(x - 1 * dpr, hy + unit * 0.35, 2 * dpr, unit * (0.25 + (i / 16) * 0.5));
+    }
+    ctx2d.restore();
+
+    // --- glitch stutter: displaced horizontal slices + chroma blocks ---
+    if (evoGlitchAmt > 0.04) {
+      let seed = evoGlitchSeed;
+      const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+      const n = 3 + Math.floor(evoGlitchAmt * 7);
+      for (let i = 0; i < n; i++) {
+        const sy = Math.floor(rnd() * h);
+        const sh = Math.max(2, Math.floor((0.01 + rnd() * 0.06) * h));
+        const dx = Math.round((rnd() - 0.5) * w * 0.12 * evoGlitchAmt);
+        if (sy + sh > h) continue;
+        ctx2d.drawImage(els.canvas, 0, sy, w, sh, dx, sy, w, sh);
+        if (rnd() < 0.5) {
+          ctx2d.fillStyle = rgbaOf(rnd() < 0.5 ? CYAN : ORANGE, 0.12 * evoGlitchAmt);
+          ctx2d.fillRect(rnd() * w, sy, w * (0.05 + rnd() * 0.25), sh);
+        }
+      }
+    }
+  }
+
   // Thin spectrum bar footer (classic mode only; the wave stays dominant).
   function drawSpectrumFooter(w, h, padX, padY, barW, gap, kick) {
     const usable = h - padY * 2;
@@ -2264,6 +2552,8 @@
       drawNodesMode(w, h, now, kick, bass, energy);
     } else if (vm === "sonar") {
       drawSonarMode(w, h, now, kick, bass, energy);
+    } else if (vm === "evolve") {
+      drawEvolveMode(w, h, now, kick, bass, energy);
     } else {
       // Classic: the original full CDJ view.
       // Always-on energy glow so the screen moves between beats
@@ -2622,7 +2912,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=17", { updateViaCache: "none" }).catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=18", { updateViaCache: "none" }).catch(() => {});
     });
   }
 
