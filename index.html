@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <title>Lighto</title>
-  <link rel="stylesheet" href="styles.css?v=19" />
+  <link rel="stylesheet" href="styles.css?v=20" />
 </head>
 <body>
   <div class="chassis" id="app">
@@ -105,11 +105,28 @@
           <output class="scale-val" id="scaleVal">1.30</output>
         </label>
       </div>
+      <div class="control-row wave-row" aria-label="Wave controls">
+        <label class="sens wave-ctl wave-h" title="Wave height (amplitude) — mainly Wave mode, lightly Classic">
+          <span>Height</span>
+          <input type="range" id="waveHCtl" min="0.4" max="2" step="0.05" value="1" aria-label="Wave height" />
+          <output class="wave-val" id="waveHVal">1.00</output>
+        </label>
+        <label class="sens wave-ctl wave-w" title="Wave column width (Wave mode)">
+          <span>Width</span>
+          <input type="range" id="waveWCtl" min="1" max="10" step="0.5" value="3" aria-label="Wave column width" />
+          <output class="wave-val" id="waveWVal">3.0</output>
+        </label>
+        <label class="sens wave-ctl wave-hue" title="Wave palette hue shift (Wave + Classic wave)">
+          <span>Hue</span>
+          <input type="range" id="waveHueCtl" min="0" max="360" step="5" value="0" aria-label="Wave hue" />
+          <output class="wave-val" id="waveHueVal">0°</output>
+        </label>
+      </div>
       <div class="theme-sheet" id="themeSheet" hidden>
         <div class="theme-chips" id="themeChips" role="listbox" aria-label="Color themes"></div>
       </div>
     </footer>
   </div>
-  <script src="app.js?v=19"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>

@@ -5,6 +5,13 @@
   const MODE_KEY = "lighto-mode";
   const SCALE_KEY = "lighto-scale";
   const SCALE_DEFAULT = 1.3;
+  // v20: Wave mode controls
+  const WAVE_H_KEY = "lighto-wave-h";
+  const WAVE_W_KEY = "lighto-wave-w";
+  const WAVE_HUE_KEY = "lighto-wave-hue";
+  const WAVE_H_DEFAULT = 1.0; // amplitude multiplier (0.4 - 2.0)
+  const WAVE_W_DEFAULT = 3; // column thickness in CSS px (1 - 10)
+  const WAVE_HUE_DEFAULT = 0; // palette hue rotation in degrees (0 - 360)
   const BAR_COUNT = 48;
   const MAX_PULSES = 6;
   const PULSE_LIFE_MS = 720;
@@ -28,6 +35,12 @@
     sensitivity: document.getElementById("sensitivity"),
     scaleCtl: document.getElementById("scaleCtl"),
     scaleVal: document.getElementById("scaleVal"),
+    waveHCtl: document.getElementById("waveHCtl"),
+    waveHVal: document.getElementById("waveHVal"),
+    waveWCtl: document.getElementById("waveWCtl"),
+    waveWVal: document.getElementById("waveWVal"),
+    waveHueCtl: document.getElementById("waveHueCtl"),
+    waveHueVal: document.getElementById("waveHueVal"),
     status: document.getElementById("status"),
     display: document.getElementById("display"),
     flxMeters: document.getElementById("flxMeters"),
@@ -306,6 +319,7 @@
   // that reuse the same beat/kick/energy analysis + DOM chrome.
   const MODES = [
     { id: "classic", name: "Classic" },
+    { id: "wave", name: "Wave" },
     { id: "orbit", name: "Orbit" },
     { id: "scope", name: "Scope" },
     { id: "nebula", name: "Nebula" },
@@ -446,6 +460,16 @@
   let waveBarCounter = 7;
   let lastWaveBarMs = 0;
   let prevWaveAmp = 0;
+  // v20 Wave mode: long history so thin columns can fill a full-screen band
+  const WV_COLS = 1400;
+  const wvAmp = new Float32Array(WV_COLS);
+  const wvBass = new Float32Array(WV_COLS);
+  const wvMid = new Float32Array(WV_COLS);
+  const wvHigh = new Float32Array(WV_COLS);
+  const wvOnset = new Float32Array(WV_COLS);
+  let wvWrite = 0;
+  let wvFilled = 0;
+  let wvFlash = 0;
 
   // Lighthouse pulse waves (beat-synced rings + beam flares under the Serato wave)
   let lhAngle = -Math.PI / 2; // faint slow accent drift
@@ -2212,6 +2236,224 @@
     }
   }
 
+  // ---- v20: Wave controls (Height / Width / Hue) ----
+  let waveHeight = WAVE_H_DEFAULT;
+  let waveWidth = WAVE_W_DEFAULT;
+  let waveHue = WAVE_HUE_DEFAULT;
+  let classicHGain = 1; // gentle Height carry-over into Classic's wave panel
+  let hueM = null; // 3x3 hue-rotate matrix (null = identity)
+
+  function clampNum(v, lo, hi, def) {
+    const n = parseFloat(v);
+    return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def;
+  }
+  function setWaveHeight(v, persist) {
+    waveHeight = clampNum(v, 0.4, 2, WAVE_H_DEFAULT);
+    classicHGain = 0.8 + waveHeight * 0.2; // 0.88 .. 1.2
+    if (els.waveHCtl && parseFloat(els.waveHCtl.value) !== waveHeight) els.waveHCtl.value = String(waveHeight);
+    if (els.waveHVal) els.waveHVal.textContent = waveHeight.toFixed(2);
+    if (persist) { try { localStorage.setItem(WAVE_H_KEY, String(waveHeight)); } catch (_) {} }
+  }
+  function setWaveWidth(v, persist) {
+    waveWidth = clampNum(v, 1, 10, WAVE_W_DEFAULT);
+    if (els.waveWCtl && parseFloat(els.waveWCtl.value) !== waveWidth) els.waveWCtl.value = String(waveWidth);
+    if (els.waveWVal) els.waveWVal.textContent = waveWidth.toFixed(1);
+    if (persist) { try { localStorage.setItem(WAVE_W_KEY, String(waveWidth)); } catch (_) {} }
+  }
+  function setWaveHue(v, persist) {
+    waveHue = Math.round(clampNum(v, 0, 360, WAVE_HUE_DEFAULT)) % 360;
+    if (waveHue === 0) {
+      hueM = null;
+    } else {
+      // Same matrix as CSS filter: hue-rotate()
+      const a = (waveHue * Math.PI) / 180;
+      const c = Math.cos(a);
+      const sn = Math.sin(a);
+      hueM = [
+        0.213 + c * 0.787 - sn * 0.213, 0.715 - c * 0.715 - sn * 0.715, 0.072 - c * 0.072 + sn * 0.928,
+        0.213 - c * 0.213 + sn * 0.143, 0.715 + c * 0.285 + sn * 0.140, 0.072 - c * 0.072 - sn * 0.283,
+        0.213 - c * 0.213 - sn * 0.787, 0.715 - c * 0.715 + sn * 0.715, 0.072 + c * 0.928 + sn * 0.072,
+      ];
+    }
+    if (els.waveHueCtl && Math.round(parseFloat(els.waveHueCtl.value)) % 360 !== waveHue) els.waveHueCtl.value = String(waveHue);
+    if (els.waveHueVal) els.waveHueVal.textContent = waveHue + "\u00b0";
+    if (persist) { try { localStorage.setItem(WAVE_HUE_KEY, String(waveHue)); } catch (_) {} }
+  }
+  function restoreWaveCtls() {
+    let hv = WAVE_H_DEFAULT, wv = WAVE_W_DEFAULT, uv = WAVE_HUE_DEFAULT;
+    try {
+      const a = parseFloat(localStorage.getItem(WAVE_H_KEY));
+      const b = parseFloat(localStorage.getItem(WAVE_W_KEY));
+      const c = parseFloat(localStorage.getItem(WAVE_HUE_KEY));
+      if (isFinite(a)) hv = a;
+      if (isFinite(b)) wv = b;
+      if (isFinite(c)) uv = c;
+    } catch (_) {}
+    setWaveHeight(hv, false);
+    setWaveWidth(wv, false);
+    setWaveHue(uv, false);
+  }
+  // rgba() string with the user's hue rotation applied
+  function hueRgba(r, g, b, a) {
+    if (hueM) {
+      const m = hueM;
+      const nr = m[0] * r + m[1] * g + m[2] * b;
+      const ng = m[3] * r + m[4] * g + m[5] * b;
+      const nb = m[6] * r + m[7] * g + m[8] * b;
+      r = nr; g = ng; b = nb;
+    }
+    r = r < 0 ? 0 : r > 255 ? 255 : r | 0;
+    g = g < 0 ? 0 : g > 255 ? 255 : g | 0;
+    b = b < 0 ? 0 : b > 255 ? 255 : b | 0;
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  // ---- v20: Wave mode — full-screen Classic Serato spectral waveform ----
+  // Same 3-tier Serato stack as Classic's panel (spectral main wave / transient
+  // ribbon / overview), but it IS the screen: edge-to-edge, taller, user Height,
+  // Width (px per column = scroll density) and Hue. No jog/booms/footer.
+  function drawWaveMode(w, h, now, kick) {
+    ctx2d.fillStyle = "#020304";
+    ctx2d.fillRect(0, 0, w, h);
+
+    const p = newestSince(pulses, wvSeenPulse);
+    if (p) { wvSeenPulse = p.t0; wvFlash = Math.max(wvFlash, Math.min(1, 0.5 + (p.strength || 0.5) * 0.5)); }
+    const bm = newestSince(booms, wvSeenBoom);
+    if (bm) { wvSeenBoom = bm.t0; wvFlash = 1; }
+    wvFlash *= 0.9;
+
+    const top = h * 0.05;
+    const bot = h * 0.95;
+    const panelH = bot - top;
+    const padX = w * 0.015;
+    const innerW = w - padX * 2;
+    const playX = padX + innerW * 0.5;
+    const mirX = playX * 2;
+
+    const mainH = panelH * 0.7;
+    const ribH = panelH * 0.07;
+    const ovH = panelH * 0.23;
+    const mainY = top;
+    const ribY = mainY + mainH;
+    const ovY = ribY + ribH;
+    const midMain = mainY + mainH * 0.5;
+    const midOv = ovY + ovH * 0.5;
+    const H = waveHeight;
+
+    // Beat grid
+    const barPx = Math.max(24 * dpr, innerW * 0.06);
+    ctx2d.strokeStyle = `rgba(90,100,112,${0.22 + wvFlash * 0.25})`;
+    ctx2d.lineWidth = 1 * dpr;
+    ctx2d.beginPath();
+    for (let gx = playX; gx >= padX; gx -= barPx) {
+      ctx2d.moveTo(gx, top); ctx2d.lineTo(gx, bot);
+      const rx = mirX - gx;
+      if (rx > playX) { ctx2d.moveTo(rx, top); ctx2d.lineTo(rx, bot); }
+    }
+    ctx2d.stroke();
+
+    const colPx = Math.max(1, waveWidth * dpr);
+    const gap = colPx >= 3 * dpr ? Math.max(0.5, colPx * 0.12) : 0; // crisp column separation when thick
+    const cw = Math.max(1, colPx - gap);
+    const maxCols = Math.min(wvFilled, Math.ceil((innerW * 0.5) / colPx) + 1);
+    const fr2 = (rx, ry, rw, rh) => {
+      ctx2d.fillRect(rx, ry, rw, rh);
+      ctx2d.fillRect(mirX - rx - rw, ry, rw, rh);
+    };
+    const bbod = currentTheme.bassBody;
+    const htip = currentTheme.highTip;
+    const he = currentTheme.highEdge;
+    const mr = currentTheme.midRibbon;
+    const ov = currentTheme.overview;
+
+    for (let i = 0; i < maxCols; i++) {
+      const idx = (wvWrite - 1 - i + WV_COLS * 2) % WV_COLS;
+      const amp = wvAmp[idx], sb = wvBass[idx], sm = wvMid[idx], sh = wvHigh[idx], so = wvOnset[idx];
+      const x = playX - (i + 1) * colPx;
+      if (x < padX - colPx) break;
+      const fresh = i < 3 ? wvFlash * 0.35 : 0;
+
+      // Main tier: bass body / spectral mid / high tips (Serato stack)
+      const half = Math.min(mainH * 0.5, Math.max(1.5 * dpr, amp * mainH * 0.46 * H));
+      const lowHalf = half * (0.5 + sb * 0.55);
+      ctx2d.fillStyle = hueRgba(bbod.r0 + sb * bbod.rS, bbod.g0 + sb * bbod.gBass + sm * bbod.gMid, bbod.b, 0.95);
+      fr2(x, midMain - lowHalf, cw, lowHalf * 2);
+
+      const [cr, cg, cb] = spectralColor(sb, sm, sh, amp);
+      const midHalf = Math.min(mainH * 0.5, half * (0.4 + sm * 0.6));
+      ctx2d.fillStyle = hueRgba(cr - 30, cg + 50, cb, 0.9);
+      fr2(x + cw * 0.12, midMain - midHalf, Math.max(1, cw * 0.76), midHalf * 2);
+
+      const hiHalf = Math.min(mainH * 0.5, half * (0.4 + sh * 0.75));
+      const tipH = Math.max(1.5 * dpr, hiHalf * 0.26);
+      ctx2d.fillStyle = hueRgba(htip.r0 + sh * htip.rS + fresh * 255, htip.g0 + sh * htip.gS + fresh * 255, htip.b0 + sh * htip.bS + fresh * 255, 1);
+      fr2(x, midMain - hiHalf, Math.max(1, cw * 0.8), tipH);
+      fr2(x, midMain + hiHalf - tipH, Math.max(1, cw * 0.8), tipH);
+      if (sh > 0.35) {
+        ctx2d.fillStyle = hueRgba(he[0], he[1], he[2], 0.4 + sh * 0.5);
+        fr2(x, midMain - hiHalf - 1 * dpr, Math.max(1, cw * 0.5), 2 * dpr);
+        fr2(x, midMain + hiHalf - 1 * dpr, Math.max(1, cw * 0.5), 2 * dpr);
+      }
+
+      // Transient ribbon
+      const oh = Math.max(1.5 * dpr, Math.min(1, so * Math.sqrt(H)) * ribH * 0.95);
+      ctx2d.fillStyle = hueRgba(mr.r0 + so * mr.rS, mr.g0 + so * mr.gS, mr.b, 0.45 + so * 0.55);
+      fr2(x, ribY + ribH - oh, Math.max(1, cw * 0.9), oh);
+
+      // Overview tier
+      const oHalf = Math.min(ovH * 0.48, Math.max(1.5 * dpr, amp * ovH * 0.46 * H));
+      ctx2d.fillStyle = hueRgba(
+        ov.br0 + sb * ov.brBass + amp * ov.brAmp,
+        ov.bg0 + sm * ov.bgMid + amp * ov.bgAmp,
+        ov.bb0 + sh * ov.bbHigh + amp * ov.bbAmp,
+        0.95
+      );
+      fr2(x, midOv - oHalf, cw, oHalf * 2);
+    }
+
+    // Centerlines + tier separators
+    ctx2d.strokeStyle = hueRgba(0, 200, 220, 0.14);
+    ctx2d.lineWidth = 1 * dpr;
+    ctx2d.beginPath();
+    ctx2d.moveTo(padX, midMain); ctx2d.lineTo(padX + innerW, midMain);
+    ctx2d.moveTo(padX, midOv); ctx2d.lineTo(padX + innerW, midOv);
+    ctx2d.stroke();
+    ctx2d.strokeStyle = "rgba(50,60,70,0.75)";
+    ctx2d.beginPath();
+    ctx2d.moveTo(padX, ribY); ctx2d.lineTo(padX + innerW, ribY);
+    ctx2d.moveTo(padX, ovY); ctx2d.lineTo(padX + innerW, ovY);
+    ctx2d.stroke();
+
+    // Bar numbers on overview tier
+    ctx2d.font = `${Math.max(8, 9 * dpr)}px -apple-system, sans-serif`;
+    ctx2d.textAlign = "center";
+    ctx2d.fillStyle = "rgba(220,230,240,0.7)";
+    for (let gx = playX, k = 0; gx >= padX && k < 10; gx -= barPx, k++) {
+      const label = String(((waveBarCounter - k - 1 + 64) % 16) + 1);
+      ctx2d.fillText(label, gx, ovY + 10 * dpr);
+      if (k > 0) ctx2d.fillText(label, mirX - gx, ovY + 10 * dpr);
+    }
+
+    // Playhead (flares on beats)
+    ctx2d.strokeStyle = `rgba(255,255,255,${0.85 + wvFlash * 0.15})`;
+    ctx2d.lineWidth = (2 + wvFlash * 2) * dpr;
+    ctx2d.shadowColor = "rgba(255,255,255,0.7)";
+    ctx2d.shadowBlur = (6 + wvFlash * 14) * dpr;
+    ctx2d.beginPath();
+    ctx2d.moveTo(playX, top); ctx2d.lineTo(playX, bot);
+    ctx2d.stroke();
+    ctx2d.shadowBlur = 0;
+    ctx2d.fillStyle = "#fff";
+    ctx2d.beginPath();
+    ctx2d.moveTo(playX, top); ctx2d.lineTo(playX - 4 * dpr, top + 6 * dpr); ctx2d.lineTo(playX + 4 * dpr, top + 6 * dpr);
+    ctx2d.closePath(); ctx2d.fill();
+    ctx2d.beginPath();
+    ctx2d.moveTo(playX, bot); ctx2d.lineTo(playX - 4 * dpr, bot - 6 * dpr); ctx2d.lineTo(playX + 4 * dpr, bot - 6 * dpr);
+    ctx2d.closePath(); ctx2d.fill();
+  }
+  let wvSeenPulse = 0;
+  let wvSeenBoom = 0;
+
   // Thin spectrum bar footer (classic mode only; the wave stays dominant).
   function drawSpectrumFooter(w, h, padX, padY, barW, gap, kick) {
     const usable = h - padY * 2;
@@ -2262,6 +2504,13 @@
     waveHist[waveWrite] = { amp, bass, mid, high, onset };
     waveWrite = (waveWrite + 1) % WAVE_COLS;
     if (waveFilled < WAVE_COLS) waveFilled++;
+    wvAmp[wvWrite] = amp;
+    wvBass[wvWrite] = bass;
+    wvMid[wvWrite] = mid;
+    wvHigh[wvWrite] = high;
+    wvOnset[wvWrite] = onset;
+    wvWrite = (wvWrite + 1) % WV_COLS;
+    if (wvFilled < WV_COLS) wvFilled++;
 
     // Advance fake bar numbers on confident beat gaps
     const barMs = bpmConfident && bpmDisplay > 0 ? (60000 / bpmDisplay) * 4 : beatInterval * 4;
@@ -2387,28 +2636,28 @@
 
       // --- Top tier: bold spectral waveform (symmetric) ---
       const midTop = topY + topH * 0.5;
-      const half = Math.max(2 * dpr, s.amp * topH * 0.62);
+      const half = Math.min(topH * 0.5, Math.max(2 * dpr, s.amp * topH * 0.62 * classicHGain));
       // Bass body — theme bass core
       const bbod = currentTheme.bassBody;
       const lowHalf = half * (0.5 + s.bass * 0.55);
       const bassR = Math.min(255, bbod.r0 + s.bass * bbod.rS);
       const bassG = Math.min(255, bbod.g0 + s.bass * bbod.gBass + s.mid * bbod.gMid);
-      ctx2d.fillStyle = `rgba(${bassR},${bassG},${bbod.b},0.95)`;
+      ctx2d.fillStyle = hueRgba(bassR, bassG, bbod.b, 0.95);
       fr2(x, midTop - lowHalf, cw, lowHalf * 2);
       // Mid layer — spectral overlay
       const midHalf = half * (0.4 + s.mid * 0.55);
-      ctx2d.fillStyle = `rgba(${Math.max(0, cr - 30)},${Math.min(255, cg + 50)},${Math.min(255, cb)},0.9)`;
+      ctx2d.fillStyle = hueRgba(Math.max(0, cr - 30), Math.min(255, cg + 50), Math.min(255, cb), 0.9);
       fr2(x + cw * 0.12, midTop - midHalf, Math.max(1, cw * 0.76), midHalf * 2);
       // High tips
       const htip = currentTheme.highTip;
       const hiHalf = half * (0.4 + s.high * 0.7);
       const tipH = Math.max(2 * dpr, hiHalf * 0.28);
-      ctx2d.fillStyle = `rgba(${Math.min(255, htip.r0 + s.high * htip.rS)},${Math.min(255, htip.g0 + s.high * htip.gS)},${Math.min(255, htip.b0 + s.high * htip.bS)},1)`;
+      ctx2d.fillStyle = hueRgba(Math.min(255, htip.r0 + s.high * htip.rS), Math.min(255, htip.g0 + s.high * htip.gS), Math.min(255, htip.b0 + s.high * htip.bS), 1);
       fr2(x, midTop - hiHalf, Math.max(1, cw * 0.7), tipH);
       fr2(x, midTop + hiHalf - tipH, Math.max(1, cw * 0.7), tipH);
       if (s.high > 0.35) {
         const he = currentTheme.highEdge;
-        ctx2d.fillStyle = rgbaOf(he, 0.4 + s.high * 0.5);
+        ctx2d.fillStyle = hueRgba(he[0], he[1], he[2], 0.4 + s.high * 0.5);
         fr2(x, midTop - hiHalf - 1 * dpr, Math.max(1, cw * 0.45), 2 * dpr);
         fr2(x, midTop + hiHalf - 1 * dpr, Math.max(1, cw * 0.45), 2 * dpr);
       }
@@ -2416,7 +2665,7 @@
       // --- Mid tier: transient ribbon ---
       const mr = currentTheme.midRibbon;
       const onsetH = Math.max(2 * dpr, s.onset * midH * 0.98);
-      ctx2d.fillStyle = `rgba(${Math.min(255, mr.r0 + s.onset * mr.rS)},${Math.min(255, mr.g0 + s.onset * mr.gS)},${mr.b},${0.45 + s.onset * 0.55})`;
+      ctx2d.fillStyle = hueRgba(Math.min(255, mr.r0 + s.onset * mr.rS), Math.min(255, mr.g0 + s.onset * mr.gS), mr.b, 0.45 + s.onset * 0.55);
       fr2(x, midY + midH - onsetH, Math.max(1, cw * 0.9), onsetH);
       if (s.onset > 0.4) {
         ctx2d.fillStyle = `rgba(255,255,255,${s.onset})`;
@@ -2430,7 +2679,7 @@
       const br = Math.min(255, ov.br0 + s.bass * ov.brBass + s.amp * ov.brAmp);
       const bg = Math.min(255, ov.bg0 + s.mid * ov.bgMid + s.amp * ov.bgAmp);
       const bb = Math.min(255, ov.bb0 + s.high * ov.bbHigh + s.amp * ov.bbAmp);
-      ctx2d.fillStyle = `rgba(${br},${bg},${bb},0.95)`;
+      ctx2d.fillStyle = hueRgba(br, bg, bb, 0.95);
       fr2(x, midBot - botHalf, cw, botHalf * 2);
     }
 
@@ -2612,6 +2861,9 @@
       drawNebulaMode(w, h, now, kick, bass, energy);
     } else if (vm === "strobe") {
       drawStrobeMode(w, h, now, kick, bass, energy);
+    } else if (vm === "wave") {
+      sampleAndPushWave(kick, bass, energy, sens, now);
+      drawWaveMode(w, h, now, kick);
     } else if (vm === "nodes") {
       drawNodesMode(w, h, now, kick, bass, energy);
     } else if (vm === "sonar") {
@@ -2976,7 +3228,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=19", { updateViaCache: "none" }).catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=20", { updateViaCache: "none" }).catch(() => {});
     });
   }
 
@@ -2987,6 +3239,10 @@
   if (els.scaleCtl) {
     els.scaleCtl.addEventListener("input", () => setUserScale(els.scaleCtl.value, true));
   }
+  restoreWaveCtls();
+  if (els.waveHCtl) els.waveHCtl.addEventListener("input", () => setWaveHeight(els.waveHCtl.value, true));
+  if (els.waveWCtl) els.waveWCtl.addEventListener("input", () => setWaveWidth(els.waveWCtl.value, true));
+  if (els.waveHueCtl) els.waveHueCtl.addEventListener("input", () => setWaveHue(els.waveHueCtl.value, true));
   initMeters();
   initBeatCounter();
   softResetBeatCounter();

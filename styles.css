@@ -1088,3 +1088,36 @@ html, body {
 @media (max-width: 480px) {
   .scale-val { display: none; }
 }
+
+/* v20: Wave controls (Height / Width / Hue) */
+.wave-row { gap: 6px 10px; }
+.wave-ctl {
+  flex: 1 1 120px;
+  min-width: 100px;
+  gap: 6px;
+}
+.wave-ctl input[type="range"] { min-width: 50px; }
+.wave-val {
+  min-width: 2.4em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--cyan);
+  letter-spacing: 0.04em;
+}
+.wave-hue input[type="range"] {
+  background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  opacity: 0.85;
+}
+.wave-hue input[type="range"]::-webkit-slider-thumb {
+  background: #fff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
+}
+.wave-hue input[type="range"]::-moz-range-thumb { background: #fff; }
+@media (orientation: landscape) and (max-height: 500px) {
+  .wave-val { display: none; }
+  .wave-ctl { flex-basis: 100px; }
+}
+@media (max-width: 480px) {
+  .wave-val { display: none; }
+  .wave-ctl { flex: 1 1 30%; min-width: 0; gap: 4px; font-size: 0.6rem; letter-spacing: 0.08em; }
+}
