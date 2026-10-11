@@ -306,6 +306,8 @@
     { id: "scope", name: "Scope" },
     { id: "nebula", name: "Nebula" },
     { id: "strobe", name: "Strobe" },
+    { id: "nodes", name: "Nodes" },
+    { id: "sonar", name: "Sonar" },
   ];
   let modeIndex = 0;
   let modeToastTimer = 0;
@@ -1483,6 +1485,381 @@
     }
   }
 
+  // ---- Lighto v17: Nodes + Sonar modes ----
+  const NODE_RING_LIFE = 1700;
+  const NODE_MAX_RINGS = 10;
+  const SONAR_RING_LIFE = 2800;
+  const SONAR_MAX_RINGS = 12;
+  const SNAP_N = 48;
+  const nodeRings = []; // { t0, side: 0|1, strength, snap, boom }
+  const sonarRings = []; // { t0, strength, snap, boom }
+  const sonarBlips = []; // { t0, a, r, col, size }
+  let nodesSeenPulse = 0;
+  let nodesSeenBoom = 0;
+  let sonarSeenPulse = 0;
+  let sonarSeenBoom = 0;
+  let sonarSweep = 0;
+  let nodeGlowL = 0;
+  let nodeGlowR = 0;
+
+  // Serato-style color for a position t (0 = low, 1 = high) along the spectrum.
+  function bandColorAt(t, amp) {
+    const b = Math.max(0, 1 - t * 2);
+    const m = Math.max(0, 1 - Math.abs(t - 0.5) * 2);
+    const hi = Math.max(0, t * 2 - 1);
+    return spectralColor(b + 0.15, m, hi, amp);
+  }
+
+  // Sample a slice [lo, hi) of the smoothed spectrum into SNAP_N points.
+  function spectrumSnap(lo, hi) {
+    const out = new Float32Array(SNAP_N);
+    const a = Math.floor(lo * BAR_COUNT);
+    const span = Math.max(1, Math.floor(hi * BAR_COUNT) - a);
+    for (let i = 0; i < SNAP_N; i++) {
+      const idx = Math.min(BAR_COUNT - 1, a + Math.floor((i / SNAP_N) * span));
+      out[i] = smoothed[idx];
+    }
+    return out;
+  }
+
+  function bandLevels() {
+    const third = Math.floor(BAR_COUNT / 3);
+    let lo = 0, md = 0, hi = 0;
+    for (let i = 0; i < BAR_COUNT; i++) {
+      if (i < third) lo += smoothed[i];
+      else if (i < third * 2) md += smoothed[i];
+      else hi += smoothed[i];
+    }
+    return [lo / third, md / third, hi / Math.max(1, BAR_COUNT - third * 2)];
+  }
+
+  // Newest-unseen pulse/boom since last check (returns strength or 0).
+  function newestSince(list, seen) {
+    let best = null;
+    for (let i = 0; i < list.length; i++) if (list[i].t0 > seen && (!best || list[i].t0 > best.t0)) best = list[i];
+    return best;
+  }
+
+  // Closed spectral blob: radius modulated by a snapshot, mirrored so it's seamless.
+  function traceSpectralRing(cx, cy, r, snap, depth, sx, sy, rot) {
+    const steps = SNAP_N * 2;
+    ctx2d.beginPath();
+    for (let i = 0; i <= steps; i++) {
+      const k = i % steps;
+      const si = k < SNAP_N ? k : steps - 1 - k;
+      const a = (k / steps) * Math.PI * 2 + rot;
+      const rr = r + snap[si] * depth;
+      const x = cx + Math.cos(a) * rr * sx;
+      const y = cy + Math.sin(a) * rr * sy;
+      if (i === 0) ctx2d.moveTo(x, y);
+      else ctx2d.lineTo(x, y);
+    }
+    ctx2d.closePath();
+  }
+
+  // Nodes: two big wave nodes, left = CH1 / bass, right = CH2 / mid-high.
+  function drawNodesMode(w, h, now, kick, bass, energy) {
+    const [lo, md, hi] = bandLevels();
+    const cy = h * 0.44;
+    const nodes = [
+      { cx: w * 0.27, lvl: Math.min(1, meterCh1 * 0.55 + lo * 0.6 + kick * 0.5), lo: 0, hi: 0.45, rot: Math.PI },
+      { cx: w * 0.73, lvl: Math.min(1, meterCh2 * 0.55 + (md + hi) * 0.45 + energy * 0.3), lo: 0.35, hi: 1, rot: 0 },
+    ];
+    nodeGlowL = Math.max(nodeGlowL * 0.9, nodes[0].lvl);
+    nodeGlowR = Math.max(nodeGlowR * 0.9, nodes[1].lvl);
+    const baseR = Math.min(w * 0.16, h * 0.2);
+    const sy = Math.min(1.25, Math.max(0.85, (h * 0.5) / (w * 0.5)));
+    const maxR = Math.max(w * 0.5, h * 0.5);
+
+    // Spawn rings: both nodes ring on a beat, the hotter side rings stronger.
+    const p = newestSince(pulses, nodesSeenPulse);
+    if (p) {
+      nodesSeenPulse = p.t0;
+      for (let s = 0; s < 2; s++) {
+        const n = nodes[s];
+        const bias = s === 0 ? 0.6 + lo * 0.6 : 0.5 + (md + hi) * 0.5;
+        nodeRings.push({ t0: now, side: s, strength: Math.min(1, p.strength * bias + n.lvl * 0.3), snap: spectrumSnap(n.lo, n.hi), boom: false });
+      }
+    }
+    const b = newestSince(booms, nodesSeenBoom);
+    if (b) {
+      nodesSeenBoom = b.t0;
+      nodeRings.push({ t0: now, side: 0, strength: 1, snap: spectrumSnap(0, 0.45), boom: true });
+      nodeRings.push({ t0: now, side: 1, strength: 0.8, snap: spectrumSnap(0.35, 1), boom: true });
+    }
+    while (nodeRings.length > NODE_MAX_RINGS * 2) nodeRings.shift();
+
+    // Ambient wash behind each node + soft link glow between them
+    const glows = [nodeGlowL, nodeGlowR];
+    for (let s = 0; s < 2; s++) {
+      const n = nodes[s];
+      const col = s === 0 ? CYAN : ORANGE;
+      const g = ctx2d.createRadialGradient(n.cx, cy, 0, n.cx, cy, baseR * 3.2);
+      g.addColorStop(0, rgbaOf(col, 0.1 + glows[s] * 0.22));
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx2d.fillStyle = g;
+      ctx2d.fillRect(n.cx - baseR * 3.2, cy - baseR * 3.2, baseR * 6.4, baseR * 6.4);
+    }
+    const link = ctx2d.createLinearGradient(nodes[0].cx, 0, nodes[1].cx, 0);
+    link.addColorStop(0, rgbaOf(CYAN, 0.15 + nodeGlowL * 0.35));
+    link.addColorStop(0.5, `rgba(255,255,255,${0.06 + kick * 0.25})`);
+    link.addColorStop(1, rgbaOf(ORANGE, 0.15 + nodeGlowR * 0.35));
+    ctx2d.fillStyle = link;
+    const lh = Math.max(2 * dpr, (3 + energy * 10) * dpr);
+    ctx2d.fillRect(nodes[0].cx, cy - lh / 2, nodes[1].cx - nodes[0].cx, lh);
+    // center playhead
+    ctx2d.fillStyle = `rgba(255,255,255,${0.35 + kick * 0.5})`;
+    ctx2d.fillRect(w * 0.5 - 1 * dpr, cy - baseR * 1.4, 2 * dpr, baseR * 2.8);
+
+    ctx2d.save();
+    ctx2d.globalCompositeOperation = "lighter";
+
+    // Expanding spectral wave rings from each node
+    for (let i = nodeRings.length - 1; i >= 0; i--) {
+      const ring = nodeRings[i];
+      const life = ring.boom ? NODE_RING_LIFE * 1.2 : NODE_RING_LIFE;
+      const age = (now - ring.t0) / life;
+      if (age >= 1) { nodeRings.splice(i, 1); continue; }
+      const n = nodes[ring.side];
+      const ease = 1 - Math.pow(1 - age, 2.4);
+      const r = baseR + ease * (maxR - baseR);
+      const depth = baseR * (0.5 + ring.strength * 0.9) * (1 - age * 0.5);
+      const alpha = (1 - age) * (0.35 + ring.strength * 0.55);
+      const segs = SNAP_N;
+      const lw = Math.max(2 * dpr, (ring.boom ? 16 : 9) * (1 - age * 0.7) * dpr);
+      // colored spectral segments, mirrored top/bottom
+      for (let k = 0; k < segs; k++) {
+        const t = ring.side === 0 ? (k / segs) * 0.45 : 0.35 + (k / segs) * 0.65;
+        const v = ring.snap[k];
+        const [cr, cg, cb] = ring.boom ? BOOM : bandColorAt(t, v + 0.3);
+        ctx2d.strokeStyle = `rgba(${cr},${cg},${cb},${alpha * (0.45 + v * 0.55)})`;
+        ctx2d.lineWidth = lw * (0.5 + v);
+        for (const dir of [1, -1]) {
+          const a0 = n.rot + dir * (k / segs) * Math.PI;
+          const a1 = n.rot + dir * ((k + 1) / segs) * Math.PI;
+          const rr = r + v * depth;
+          ctx2d.beginPath();
+          ctx2d.ellipse(n.cx, cy, rr, rr * sy, 0, Math.min(a0, a1), Math.max(a0, a1));
+          ctx2d.stroke();
+        }
+      }
+    }
+
+    // Live node bodies: spectral blob + time-domain wave ring
+    for (let s = 0; s < 2; s++) {
+      const n = nodes[s];
+      const snap = spectrumSnap(n.lo, n.hi);
+      const r0 = baseR * (0.82 + n.lvl * 0.35);
+      const rot = n.rot - Math.PI / 2;
+      // filled spectral blob
+      traceSpectralRing(n.cx, cy, r0 * 0.75, snap, baseR * 0.9, 1, sy, rot);
+      const fill = ctx2d.createRadialGradient(n.cx, cy, 0, n.cx, cy, r0 * 1.6);
+      const cA = bandColorAt(s === 0 ? 0.1 : 0.85, 0.9);
+      const cB = bandColorAt(s === 0 ? 0.35 : 0.55, 0.7);
+      fill.addColorStop(0, `rgba(255,255,255,${0.18 + n.lvl * 0.3})`);
+      fill.addColorStop(0.35, `rgba(${cA[0]},${cA[1]},${cA[2]},${0.35 + n.lvl * 0.4})`);
+      fill.addColorStop(1, `rgba(${cB[0]},${cB[1]},${cB[2]},0.08)`);
+      ctx2d.fillStyle = fill;
+      ctx2d.fill();
+      ctx2d.strokeStyle = rgbaOf(s === 0 ? CYAN : ORANGE, 0.5 + n.lvl * 0.5);
+      ctx2d.lineWidth = 2 * dpr;
+      ctx2d.stroke();
+
+      // oscilloscope ring from that channel's time data
+      const td = stereoMode && timeL && timeR ? (s === 0 ? timeL : timeR) : timeData;
+      if (td) {
+        const steps = 96;
+        const rr = r0 * 1.25;
+        ctx2d.beginPath();
+        for (let i = 0; i <= steps; i++) {
+          const k = i % steps;
+          const idx = Math.floor((k / steps) * (td.length - 1));
+          const v = (td[idx] - 128) / 128;
+          const a = (k / steps) * Math.PI * 2;
+          const rad = rr + v * baseR * (0.6 + n.lvl * 1.4);
+          const x = n.cx + Math.cos(a) * rad;
+          const y = cy + Math.sin(a) * rad * sy;
+          if (i === 0) ctx2d.moveTo(x, y);
+          else ctx2d.lineTo(x, y);
+        }
+        ctx2d.closePath();
+        ctx2d.strokeStyle = rgbaOf(s === 0 ? CYAN : ORANGE, 0.35 + n.lvl * 0.5);
+        ctx2d.lineWidth = Math.max(1.5, 2.2 * dpr);
+        ctx2d.stroke();
+      }
+
+      // core
+      ctx2d.beginPath();
+      ctx2d.arc(n.cx, cy, baseR * (0.12 + n.lvl * 0.1), 0, Math.PI * 2);
+      ctx2d.fillStyle = `rgba(255,255,255,${0.4 + n.lvl * 0.5})`;
+      ctx2d.fill();
+    }
+    ctx2d.restore();
+  }
+
+  // Sonar: top-down PPI with beat pings, spectral arcs, sweep wedge, blips.
+  function drawSonarMode(w, h, now, kick, bass, energy) {
+    const cx = w * 0.5;
+    const cy = h * 0.46;
+    const minDim = Math.min(w, h);
+    const maxR = Math.hypot(Math.max(cx, w - cx), Math.max(cy, h - cy)) * 0.92;
+    const gridR = minDim * 0.48;
+
+    // Spawn pings
+    const p = newestSince(pulses, sonarSeenPulse);
+    if (p) {
+      sonarSeenPulse = p.t0;
+      sonarRings.push({ t0: now, strength: p.strength, snap: spectrumSnap(0, 1), boom: false });
+      const nb = 2 + Math.round(p.strength * 3);
+      for (let i = 0; i < nb; i++) {
+        const t = Math.random();
+        sonarBlips.push({
+          t0: now,
+          a: Math.random() * Math.PI * 2,
+          r: gridR * (0.2 + Math.random() * 0.8),
+          col: bandColorAt(t, 0.9),
+          size: (2 + Math.random() * 3 + p.strength * 3) * dpr,
+        });
+      }
+      while (sonarBlips.length > 40) sonarBlips.shift();
+    }
+    const b = newestSince(booms, sonarSeenBoom);
+    if (b) {
+      sonarSeenBoom = b.t0;
+      sonarRings.push({ t0: now, strength: 1, snap: spectrumSnap(0, 1), boom: true });
+    }
+    while (sonarRings.length > SONAR_MAX_RINGS) sonarRings.shift();
+
+    // Dark well
+    const well = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, maxR);
+    well.addColorStop(0, rgbaOf(CYAN, 0.08 + kick * 0.1));
+    well.addColorStop(0.55, "rgba(4,10,14,0.25)");
+    well.addColorStop(1, "rgba(0,0,0,0.4)");
+    ctx2d.fillStyle = well;
+    ctx2d.fillRect(0, 0, w, h);
+
+    // Static grid: range rings + crosshair + bearing ticks
+    ctx2d.strokeStyle = rgbaOf(CYAN, 0.14);
+    ctx2d.lineWidth = 1 * dpr;
+    for (let i = 1; i <= 4; i++) {
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, (gridR * i) / 4, 0, Math.PI * 2);
+      ctx2d.stroke();
+    }
+    ctx2d.beginPath();
+    ctx2d.moveTo(cx - gridR, cy); ctx2d.lineTo(cx + gridR, cy);
+    ctx2d.moveTo(cx, cy - gridR); ctx2d.lineTo(cx, cy + gridR);
+    ctx2d.stroke();
+    for (let i = 0; i < 36; i++) {
+      const a = (i / 36) * Math.PI * 2;
+      const t0 = i % 3 === 0 ? 0.94 : 0.97;
+      ctx2d.beginPath();
+      ctx2d.moveTo(cx + Math.cos(a) * gridR * t0, cy + Math.sin(a) * gridR * t0);
+      ctx2d.lineTo(cx + Math.cos(a) * gridR, cy + Math.sin(a) * gridR);
+      ctx2d.stroke();
+    }
+
+    // Rotating sweep wedge (sonar brush)
+    const spin = (bpmConfident ? bpmDisplay : 120) / 60;
+    sonarSweep += (0.012 + energy * 0.01) * (0.6 + spin * 0.2);
+    const wedge = 0.9;
+    const wSteps = 18;
+    for (let i = 0; i < wSteps; i++) {
+      const a1 = sonarSweep - (i / wSteps) * wedge;
+      const a0 = sonarSweep - ((i + 1) / wSteps) * wedge;
+      ctx2d.beginPath();
+      ctx2d.moveTo(cx, cy);
+      ctx2d.arc(cx, cy, gridR, a0, a1);
+      ctx2d.closePath();
+      ctx2d.fillStyle = rgbaOf(CYAN, (1 - i / wSteps) * (0.07 + energy * 0.08));
+      ctx2d.fill();
+    }
+    ctx2d.beginPath();
+    ctx2d.moveTo(cx, cy);
+    ctx2d.lineTo(cx + Math.cos(sonarSweep) * gridR, cy + Math.sin(sonarSweep) * gridR);
+    ctx2d.strokeStyle = rgbaOf(CYAN, 0.55 + kick * 0.4);
+    ctx2d.lineWidth = 2 * dpr;
+    ctx2d.stroke();
+
+    ctx2d.save();
+    ctx2d.globalCompositeOperation = "lighter";
+
+    // Ping rings with spectral arcs + rays
+    const segs = SNAP_N;
+    for (let i = sonarRings.length - 1; i >= 0; i--) {
+      const ring = sonarRings[i];
+      const life = ring.boom ? SONAR_RING_LIFE * 1.1 : SONAR_RING_LIFE;
+      const age = (now - ring.t0) / life;
+      if (age >= 1) { sonarRings.splice(i, 1); continue; }
+      const ease = 1 - Math.pow(1 - age, 1.8);
+      const r = minDim * 0.04 + ease * maxR;
+      const fade = Math.pow(1 - age, 1.3);
+      const alpha = fade * (0.4 + ring.strength * 0.6);
+      // thin base ring
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx2d.strokeStyle = ring.boom ? rgbaOf(BOOM, alpha * 0.9) : rgbaOf(CYAN, alpha * 0.45);
+      ctx2d.lineWidth = Math.max(1.5, (ring.boom ? 10 : 2.5) * (1 - age * 0.6) * dpr);
+      ctx2d.stroke();
+      // spectral arcs (spectrum wraps around the ring, mirrored L/R)
+      const lw = Math.max(1.5, 6 * (1 - age * 0.7) * dpr);
+      for (let k = 0; k < segs; k++) {
+        const v = ring.snap[k];
+        if (v < 0.06) continue;
+        const t = k / segs;
+        const [cr, cg, cb] = bandColorAt(t, v + 0.25);
+        const span = (Math.PI / segs) * 0.8;
+        for (const dir of [1, -1]) {
+          const ac = -Math.PI / 2 + dir * (t * Math.PI + span / 2);
+          ctx2d.beginPath();
+          ctx2d.arc(cx, cy, r, ac - span / 2, ac + span / 2);
+          ctx2d.strokeStyle = `rgba(${cr},${cg},${cb},${alpha * (0.4 + v * 0.6)})`;
+          ctx2d.lineWidth = lw * (0.6 + v * 1.2);
+          ctx2d.stroke();
+          // outward ray on hot bins
+          if (v > 0.35) {
+            const len = v * minDim * 0.09 * (1 - age * 0.5);
+            ctx2d.beginPath();
+            ctx2d.moveTo(cx + Math.cos(ac) * r, cy + Math.sin(ac) * r);
+            ctx2d.lineTo(cx + Math.cos(ac) * (r + len), cy + Math.sin(ac) * (r + len));
+            ctx2d.strokeStyle = `rgba(${cr},${cg},${cb},${alpha * v * 0.8})`;
+            ctx2d.lineWidth = Math.max(1, 2 * dpr);
+            ctx2d.stroke();
+          }
+        }
+      }
+    }
+
+    // Contacts: blips glow brightest as the sweep passes them
+    for (let i = sonarBlips.length - 1; i >= 0; i--) {
+      const bl = sonarBlips[i];
+      const age = (now - bl.t0) / 4000;
+      if (age >= 1) { sonarBlips.splice(i, 1); continue; }
+      let d = (sonarSweep - bl.a) % (Math.PI * 2);
+      if (d < 0) d += Math.PI * 2;
+      const lit = Math.max(0, 1 - d / 1.6);
+      const a = (1 - age) * (0.25 + lit * 0.75);
+      const x = cx + Math.cos(bl.a) * bl.r;
+      const y = cy + Math.sin(bl.a) * bl.r;
+      const g = ctx2d.createRadialGradient(x, y, 0, x, y, bl.size * 3);
+      g.addColorStop(0, `rgba(${bl.col[0]},${bl.col[1]},${bl.col[2]},${a})`);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx2d.fillStyle = g;
+      ctx2d.fillRect(x - bl.size * 3, y - bl.size * 3, bl.size * 6, bl.size * 6);
+    }
+
+    // Live center transducer: small spectral rosette
+    const live = spectrumSnap(0, 1);
+    traceSpectralRing(cx, cy, minDim * 0.035, live, minDim * 0.06, 1, 1, -Math.PI / 2);
+    ctx2d.fillStyle = rgbaOf(ORANGE, 0.25 + energy * 0.4);
+    ctx2d.fill();
+    ctx2d.beginPath();
+    ctx2d.arc(cx, cy, minDim * (0.012 + kick * 0.012), 0, Math.PI * 2);
+    ctx2d.fillStyle = `rgba(255,255,255,${0.6 + kick * 0.4})`;
+    ctx2d.fill();
+    ctx2d.restore();
+  }
+
   // Thin spectrum bar footer (classic mode only; the wave stays dominant).
   function drawSpectrumFooter(w, h, padX, padY, barW, gap, kick) {
     const usable = h - padY * 2;
@@ -1883,6 +2260,10 @@
       drawNebulaMode(w, h, now, kick, bass, energy);
     } else if (vm === "strobe") {
       drawStrobeMode(w, h, now, kick, bass, energy);
+    } else if (vm === "nodes") {
+      drawNodesMode(w, h, now, kick, bass, energy);
+    } else if (vm === "sonar") {
+      drawSonarMode(w, h, now, kick, bass, energy);
     } else {
       // Classic: the original full CDJ view.
       // Always-on energy glow so the screen moves between beats
@@ -2241,7 +2622,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=16", { updateViaCache: "none" }).catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=17", { updateViaCache: "none" }).catch(() => {});
     });
   }
 
