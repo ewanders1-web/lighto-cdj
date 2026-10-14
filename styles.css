@@ -356,6 +356,57 @@ html, body {
   display: block;
 }
 
+.custom-colors {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #232b36;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.custom-colors-label {
+  opacity: 0.65;
+}
+
+.custom-colors label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.custom-colors input[type="color"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #2a3340;
+  border-radius: 50%;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.custom-colors input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 3px;
+}
+
+.custom-colors input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+
+.custom-colors input[type="color"]::-moz-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+
 
 .ctrl-btn {
   appearance: none;

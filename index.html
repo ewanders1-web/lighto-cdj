@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <title>Lighto</title>
-  <link rel="stylesheet" href="styles.css?v=20" />
+  <link rel="stylesheet" href="styles.css?v=21" />
 </head>
 <body>
   <div class="chassis" id="app">
@@ -124,9 +124,16 @@
       </div>
       <div class="theme-sheet" id="themeSheet" hidden>
         <div class="theme-chips" id="themeChips" role="listbox" aria-label="Color themes"></div>
+        <div class="custom-colors">
+          <span class="custom-colors-label">Custom</span>
+          <label>Bass <input type="color" id="bassPick" value="#ff3c14" aria-label="Custom bass color" /></label>
+          <label>Mid <input type="color" id="midPick" value="#14ff9c" aria-label="Custom mid color" /></label>
+          <label>High <input type="color" id="highPick" value="#4da6ff" aria-label="Custom high color" /></label>
+        </div>
       </div>
     </footer>
   </div>
-  <script src="app.js?v=20"></script>
+  <script src="themes.js?v=21"></script>
+  <script src="app.js?v=21"></script>
 </body>
 </html>
