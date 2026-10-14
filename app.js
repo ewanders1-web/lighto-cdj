@@ -320,6 +320,7 @@
   const MODES = [
     { id: "classic", name: "Classic" },
     { id: "wave", name: "Wave" },
+    { id: "djay", name: "Djay" },
     { id: "orbit", name: "Orbit" },
     { id: "scope", name: "Scope" },
     { id: "nebula", name: "Nebula" },
@@ -2451,6 +2452,113 @@
     ctx2d.moveTo(playX, bot); ctx2d.lineTo(playX - 4 * dpr, bot - 6 * dpr); ctx2d.lineTo(playX + 4 * dpr, bot - 6 * dpr);
     ctx2d.closePath(); ctx2d.fill();
   }
+
+  // ---- Djay mode: dual-deck stacked RGB waveforms, djay Pro style ----
+  // Two horizontal scrolling waveform strips (Deck A top, Deck B bottom),
+  // frequency-colored like djay/Serato RGB waveforms, center playheads,
+  // beat grid + bar numbers. Deck B trails Deck A by a few bars so the
+  // pair reads as two decks riding the same live input.
+  function drawDjayMode(w, h, now, kick, bass, energy) {
+    ctx2d.fillStyle = "#07090d";
+    ctx2d.fillRect(0, 0, w, h);
+
+    const padX = w * 0.02;
+    const innerW = w - padX * 2;
+    const stripGap = Math.max(8 * dpr, h * 0.045);
+    const stripH = (h - stripGap) / 2;
+    const playX = padX + innerW * 0.5;
+    const H = waveHeight;
+    const colPx = Math.max(2 * dpr, waveWidth * dpr);
+    const cw = Math.max(1 * dpr, colPx * 0.84);
+    const flash = Math.min(1, kick * 1.25);
+    const barPx = Math.max(30 * dpr, innerW * 0.055);
+
+    const strips = [
+      { y: 0, label: "A", delay: 0 },
+      { y: stripH + stripGap, label: "B", delay: 200 },
+    ];
+
+    for (const s of strips) {
+      const top = s.y;
+      const midY = top + stripH * 0.5;
+      const maxHalf = stripH * 0.40;
+
+      // Strip backdrop tint (deck B a touch dimmer)
+      ctx2d.fillStyle = s.delay ? "rgba(10,13,18,0.55)" : "rgba(12,15,21,0.55)";
+      ctx2d.fillRect(padX, top + 2 * dpr, innerW, stripH - 4 * dpr);
+
+      // Beat grid
+      ctx2d.strokeStyle = `rgba(110,120,135,${0.20 + flash * 0.18})`;
+      ctx2d.lineWidth = 1 * dpr;
+      ctx2d.beginPath();
+      for (let gx = playX; gx >= padX - barPx; gx -= barPx) {
+        ctx2d.moveTo(gx, top + 4 * dpr); ctx2d.lineTo(gx, top + stripH - 4 * dpr);
+        const rx = playX + (playX - gx);
+        if (rx <= padX + innerW + barPx) { ctx2d.moveTo(rx, top + 4 * dpr); ctx2d.lineTo(rx, top + stripH - 4 * dpr); }
+      }
+      ctx2d.stroke();
+
+      // Waveform columns, newest at playhead scrolling left
+      const avail = Math.max(0, wvFilled - s.delay);
+      const maxCols = Math.min(avail, Math.ceil((innerW * 0.5) / colPx) + 2);
+      for (let i = 0; i < maxCols; i++) {
+        const idx = (wvWrite - 1 - i - s.delay + WV_COLS * 4) % WV_COLS;
+        const amp = wvAmp[idx], sb = wvBass[idx], sm = wvMid[idx], sh = wvHigh[idx];
+        const x = playX - (i + 1) * colPx;
+        if (x < padX - colPx) break;
+        const half = Math.min(maxHalf, Math.max(1.2 * dpr, amp * maxHalf * 0.94 * H));
+        const [cr, cg, cb] = spectralColor(sb, sm, sh, amp);
+        // djay-style body: vivid spectral fill
+        ctx2d.fillStyle = hueRgba(cr, cg, cb, s.delay ? 0.82 : 0.95);
+        ctx2d.fillRect(x, midY - half, cw, half * 2);
+        // Sheen: lighter top edge like djay's 3D waveform look
+        const sheen = Math.max(1 * dpr, cw * 0.9);
+        ctx2d.fillStyle = hueRgba(Math.min(255, cr + 70), Math.min(255, cg + 70), Math.min(255, cb + 70), 0.75);
+        ctx2d.fillRect(x, midY - half, sheen, Math.max(1 * dpr, half * 0.16));
+      }
+
+      // Centerline
+      ctx2d.strokeStyle = "rgba(140,150,165,0.16)";
+      ctx2d.lineWidth = 1 * dpr;
+      ctx2d.beginPath();
+      ctx2d.moveTo(padX, midY); ctx2d.lineTo(padX + innerW, midY);
+      ctx2d.stroke();
+
+      // Playhead (flares with kick)
+      ctx2d.strokeStyle = `rgba(255,255,255,${0.8 + flash * 0.2})`;
+      ctx2d.lineWidth = (1.6 + flash * 2.2) * dpr;
+      ctx2d.shadowColor = "rgba(120,200,255,0.8)";
+      ctx2d.shadowBlur = (4 + flash * 16) * dpr;
+      ctx2d.beginPath();
+      ctx2d.moveTo(playX, top + 3 * dpr); ctx2d.lineTo(playX, top + stripH - 3 * dpr);
+      ctx2d.stroke();
+      ctx2d.shadowBlur = 0;
+
+      // Deck badge
+      const bs = Math.max(14 * dpr, stripH * 0.20);
+      ctx2d.font = `700 ${bs}px -apple-system, sans-serif`;
+      ctx2d.textAlign = "left";
+      ctx2d.fillStyle = s.delay ? "rgba(150,170,195,0.5)" : "rgba(170,200,235,0.75)";
+      ctx2d.fillText(s.label, padX + 6 * dpr, top + bs + 6 * dpr);
+
+      // Bar numbers (djay-style 1..16 cycling)
+      ctx2d.font = `${Math.max(8, 8.5 * dpr)}px -apple-system, sans-serif`;
+      ctx2d.textAlign = "center";
+      ctx2d.fillStyle = "rgba(200,212,228,0.55)";
+      for (let gx = playX, k = 0; gx >= padX && k < 8; gx -= barPx, k++) {
+        const label = String(((waveBarCounter - k - 1 + 64) % 16) + 1);
+        ctx2d.fillText(label, gx, top + stripH - 6 * dpr);
+      }
+    }
+
+    // Divider between decks
+    const dy = stripH + stripGap / 2;
+    ctx2d.strokeStyle = "rgba(90,110,140,0.35)";
+    ctx2d.lineWidth = 1 * dpr;
+    ctx2d.beginPath();
+    ctx2d.moveTo(padX, dy); ctx2d.lineTo(padX + innerW, dy);
+    ctx2d.stroke();
+  }
   let wvSeenPulse = 0;
   let wvSeenBoom = 0;
 
@@ -2864,6 +2972,9 @@
     } else if (vm === "wave") {
       sampleAndPushWave(kick, bass, energy, sens, now);
       drawWaveMode(w, h, now, kick);
+    } else if (vm === "djay") {
+      sampleAndPushWave(kick, bass, energy, sens, now);
+      drawDjayMode(w, h, now, kick, bass, energy);
     } else if (vm === "nodes") {
       drawNodesMode(w, h, now, kick, bass, energy);
     } else if (vm === "sonar") {
