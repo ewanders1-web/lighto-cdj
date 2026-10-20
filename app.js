@@ -2507,32 +2507,136 @@
   }
   function wvAt(i) { return (wvWrite - 1 - i + WV_COLS * 2) % WV_COLS; }
 
+  // ---- v23: Decks beat clock (per-deck onset detectors, phase-locked) ----
+  function mkDeck() { return { beats: [], count: 0, intervals: [], interval: 500, lastT: 0, flash: 0, down: false, angFrom: 0, angTo: 0, stepT: 0, avg: 0, prev: 0, seenMain: 0 }; }
+  const decks = [mkDeck(), mkDeck()];
+  function deckBeat(d, now) {
+    if (d.lastT > 0) {
+      const gap = now - d.lastT;
+      if (gap < 250) return;
+      if (gap < 1500) {
+        d.intervals.push(gap); if (d.intervals.length > 12) d.intervals.shift();
+        const s = d.intervals.slice().sort((a, b) => a - b);
+        d.interval = s[s.length >> 1];
+      } else { d.intervals.length = 0; d.count = 0; }
+    }
+    d.lastT = now;
+    d.count = (d.count % 4) + 1;
+    d.down = d.count === 1;
+    d.beats.push({ t: now, down: d.down });
+    while (d.beats.length && now - d.beats[0].t > 20000) d.beats.shift();
+    d.angFrom = deckAngle(d, now); d.angTo = (d.count - 1) * Math.PI / 2; d.stepT = now;
+    d.flash = d.down ? 1 : 0.75;
+  }
+  function deckBpm(d, now) {
+    if (now - d.lastT > 2000 || d.intervals.length < 3) return 0;
+    const s = d.intervals, med = d.interval;
+    let ok = 0; for (const g of s) if (Math.abs(g - med) < med * 0.15) ok++;
+    return ok / s.length >= 0.5 ? 60000 / med : 0;
+  }
+  function deckAngle(d, now) {
+    if (!d.stepT) return 0;
+    const e = Math.min(1, (now - d.stepT) / 90);
+    const ease = 1 - Math.pow(1 - e, 3);
+    let to = d.angTo, from = d.angFrom;
+    while (to - from > Math.PI) from += Math.PI * 2;
+    while (from - to > Math.PI) from -= Math.PI * 2;
+    let a = from + (to - from) * ease;
+    // interpolate toward next quarter using measured interval; stop when stale
+    const since = now - d.stepT;
+    if (since < 2000 && d.intervals.length >= 2) a += Math.min(0.95, since / d.interval) * (Math.PI / 2) * ease;
+    return a;
+  }
+  function deckDetect(now) {
+    const j = wvAt(0);
+    // deck 1: kick/bass flux
+    const v1 = wvKick[j] * 0.7 + wvBass[j] * 0.5 + wvOnset[j] * 0.3;
+    // deck 2: mid/high flux
+    const v2 = wvMid[j] * 0.6 + wvHigh[j] * 0.8;
+    [v1, v2].forEach((v, i) => {
+      const d = decks[i];
+      const rise = v - d.prev; d.prev = v;
+      d.avg = d.avg * 0.95 + v * 0.05;
+      const thr = i === 0 ? 0.06 : 0.05;
+      const minGap = Math.max(250, d.interval * 0.6);
+      if (v > 0.06 && rise > thr && v > d.avg * 1.25 && now - d.lastT > minGap) deckBeat(d, now);
+    });
+    // Fallback: if the main detector fires and a deck has been silent >1.2s, use it.
+    if (lastBeat > 0 && lastBeat !== decks[0].seenMain) {
+      for (const d of decks) { if (now - d.lastT > 1200 && now - lastBeat < 100) deckBeat(d, lastBeat); d.seenMain = lastBeat; }
+    }
+    for (const d of decks) d.flash *= 0.88;
+  }
+  function vivid(r, g, b, boost) {
+    const mx = Math.max(r, g, b, 1), mn = Math.min(r, g, b);
+    const s = 1.6; // push saturation
+    const avg = (r + g + b) / 3;
+    r = avg + (r - avg) * s; g = avg + (g - avg) * s; b = avg + (b - avg) * s;
+    const k = (255 / Math.max(mx, 1)) * boost;
+    return [Math.max(0, Math.min(255, r * k)), Math.max(0, Math.min(255, g * k)), Math.max(0, Math.min(255, b * k))];
+  }
+
   // Horizontal Serato spectral strip (used by Decks)
   function sxStrip(x0, y0, sw, sh, now, which) {
-    ctx2d.fillStyle = "rgba(12,14,18,0.95)";
+    ctx2d.fillStyle = "rgba(10,12,16,0.97)";
     ctx2d.fillRect(x0, y0, sw, sh);
     const playX = x0 + sw * 0.5, mid = y0 + sh / 2;
-    const colPx = Math.max(1, waveWidth * dpr * 0.7);
+    const colPx = Math.max(2 * dpr, waveWidth * dpr * 1.2);
+    const pxPerMs = colPx / sxFrameMs();
     const cols = Math.min(wvFilled, Math.ceil(sw / 2 / colPx) + 1);
-    const sp = currentTheme.spectral;
+    ctx2d.save();
+    ctx2d.beginPath(); ctx2d.rect(x0, y0, sw, sh); ctx2d.clip();
+    ctx2d.globalCompositeOperation = "lighter";
     for (let i = 0; i < cols; i++) {
       const j = wvAt(i);
       const b = wvBass[j], m = wvMid[j], hi = wvHigh[j];
-      const v = which === 0 ? Math.min(1, b * 0.8 + wvKick[j] * 0.4 + wvAmp[j] * 0.3) : Math.min(1, m * 0.6 + hi * 0.6 + wvAmp[j] * 0.2);
-      const [r, g, bl] = which === 0 ? spectralColor(b, m * 0.5, hi * 0.3, v) : spectralColor(b * 0.3, m, hi, v);
-      ctx2d.fillStyle = hueRgba(r, g, bl, 0.95);
-      const hh = Math.max(1, v * sh * 0.48 * waveHeight);
-      const x = playX - (i + 1) * colPx;
-      ctx2d.fillRect(x, mid - hh, colPx, hh * 2);
-      ctx2d.fillRect(2 * playX - x - colPx, mid - hh, colPx, hh * 2);
+      const v = which === 0 ? Math.min(1, b * 0.8 + wvKick[j] * 0.45 + wvAmp[j] * 0.35) : Math.min(1, m * 0.65 + hi * 0.65 + wvAmp[j] * 0.25);
+      const x = playX - (i + 1) * colPx, xr = 2 * playX - x - colPx;
+      const H = sh * 0.48 * waveHeight;
+      // layered full-spectrum: bass body, mid band, high tips
+      const wB = which === 0 ? 1.0 : 0.6, wH = which === 0 ? 0.7 : 1.15;
+      const layers = [
+        [Math.min(1, v * (0.55 + b * 0.6) * wB), spectralColor(1, b * 0.25, 0, 1)],
+        [Math.min(1, v * (0.35 + m * 0.55)), spectralColor(b * 0.15, 1, hi * 0.2, 1)],
+        [Math.min(1, v * (0.18 + hi * 0.5) * wH), spectralColor(0, m * 0.3, 1, 1)],
+      ];
+      for (let L = 0; L < 3; L++) {
+        const [lv, c] = layers[L];
+        const hh = Math.max(dpr * 0.5, lv * H);
+        const [r, g, bl] = vivid(c[0], c[1], c[2], 0.55 + v * 0.5);
+        ctx2d.fillStyle = hueRgba(r, g, bl, L === 2 ? 0.8 : 0.9);
+        ctx2d.fillRect(x, mid - hh, colPx - 0.3 * dpr, hh * 2);
+        ctx2d.fillRect(xr, mid - hh, colPx - 0.3 * dpr, hh * 2);
+      }
+      if (hi > 0.55) { // white sparkle on hot highs
+        ctx2d.fillStyle = `rgba(255,255,255,${(hi - 0.55) * 1.2})`;
+        const hh = v * H * 0.25;
+        ctx2d.fillRect(x, mid - hh, colPx, hh * 2); ctx2d.fillRect(xr, mid - hh, colPx, hh * 2);
+      }
     }
-    sxBeatGrid(now, colPx, sw / 2, (off, down) => {
-      ctx2d.fillStyle = down ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.25)";
-      ctx2d.fillRect(playX - off, y0, dpr, sh);
-      ctx2d.fillRect(playX + off, y0, dpr, sh);
-    });
+    ctx2d.globalCompositeOperation = "source-over";
+    // beat grid at real detected beat times for this deck
+    const d = decks[which];
+    for (let k = d.beats.length - 1; k >= 0; k--) {
+      const bt = d.beats[k], off = (now - bt.t) * pxPerMs;
+      if (off > sw / 2) break;
+      ctx2d.fillStyle = bt.down ? "rgba(255,170,40,0.95)" : "rgba(255,255,255,0.45)";
+      const t = bt.down ? 2.5 * dpr : dpr;
+      ctx2d.fillRect(playX - off - t / 2, y0, t, sh);
+    }
+    ctx2d.restore();
+    const g = which === 0 ? "255,120,40" : "60,200,255";
+    ctx2d.strokeStyle = `rgba(${g},${0.3 + d.flash * 0.6})`;
+    ctx2d.lineWidth = dpr;
+    ctx2d.strokeRect(x0, y0, sw, sh);
     ctx2d.fillStyle = "#fff";
+    ctx2d.shadowColor = "rgba(255,255,255,0.9)"; ctx2d.shadowBlur = 8 * dpr;
     ctx2d.fillRect(playX - dpr, y0 - 2 * dpr, 2 * dpr, sh + 4 * dpr);
+    ctx2d.shadowBlur = 0;
+    ctx2d.font = `700 ${Math.max(9, 10 * dpr)}px -apple-system, sans-serif`;
+    ctx2d.textAlign = "left";
+    ctx2d.fillStyle = `rgba(${g},0.95)`;
+    ctx2d.fillText(which === 0 ? "1 · KICK" : "2 · HATS", x0 + 5 * dpr, y0 + 12 * dpr);
   }
 
   function drawVerticalMode(w, h, now) {
@@ -2626,50 +2730,72 @@
     ctx2d.shadowBlur = 0;
   }
 
-  function sxPlatter(cx, cy, r, now, label) {
-    const bpm = sxBpm();
-    const barMs = (60000 / bpm) * 4;
-    const anchor = lastBeat > 0 ? lastBeat : 0;
-    const ang = (((now - anchor) / barMs) % 1) * Math.PI * 2 - Math.PI / 2;
+  function sxPlatter(cx, cy, r, now, label, d) {
+    const bpm = deckBpm(d, now);
+    const ang = deckAngle(d, now) - Math.PI / 2;
+    const f = d.flash, rgb = d.down && f > 0.05 ? "255,150,30" : "0,230,255";
     ctx2d.fillStyle = "#0b0d11";
     ctx2d.beginPath(); ctx2d.arc(cx, cy, r, 0, Math.PI * 2); ctx2d.fill();
     ctx2d.strokeStyle = "rgba(255,255,255,0.08)";
     ctx2d.lineWidth = dpr;
     for (let k = 1; k <= 3; k++) { ctx2d.beginPath(); ctx2d.arc(cx, cy, r * (0.3 + k * 0.17), 0, Math.PI * 2); ctx2d.stroke(); }
-    ctx2d.strokeStyle = `rgba(0,230,255,${0.35 + sxFlash * 0.65})`;
-    ctx2d.lineWidth = (2 + sxFlash * 4) * dpr;
-    ctx2d.shadowColor = "rgba(0,230,255,0.9)";
-    ctx2d.shadowBlur = sxFlash * 24 * dpr;
+    // quarter ticks
+    for (let q = 0; q < 4; q++) {
+      const a = q * Math.PI / 2 - Math.PI / 2;
+      ctx2d.fillStyle = q === 0 ? "rgba(255,150,30,0.9)" : "rgba(255,255,255,0.4)";
+      ctx2d.beginPath(); ctx2d.arc(cx + Math.cos(a) * r * 0.97, cy + Math.sin(a) * r * 0.97, (q === 0 ? 3 : 2) * dpr, 0, Math.PI * 2); ctx2d.fill();
+    }
+    ctx2d.strokeStyle = `rgba(${rgb},${0.3 + f * 0.7})`;
+    ctx2d.lineWidth = (2 + f * (d.down ? 7 : 4)) * dpr;
+    ctx2d.shadowColor = `rgba(${rgb},0.95)`;
+    ctx2d.shadowBlur = f * (d.down ? 34 : 22) * dpr;
     ctx2d.beginPath(); ctx2d.arc(cx, cy, r, 0, Math.PI * 2); ctx2d.stroke();
     ctx2d.shadowBlur = 0;
-    const ex = cx + Math.cos(ang) * r * 0.92, ey = cy + Math.sin(ang) * r * 0.92;
+    const ex = cx + Math.cos(ang) * r * 0.9, ey = cy + Math.sin(ang) * r * 0.9;
     ctx2d.strokeStyle = "#fff";
     ctx2d.lineWidth = 3 * dpr;
     ctx2d.beginPath(); ctx2d.moveTo(cx + Math.cos(ang) * r * 0.35, cy + Math.sin(ang) * r * 0.35); ctx2d.lineTo(ex, ey); ctx2d.stroke();
     ctx2d.fillStyle = "#fff";
     ctx2d.beginPath(); ctx2d.arc(ex, ey, 5 * dpr, 0, Math.PI * 2); ctx2d.fill();
     ctx2d.textAlign = "center";
+    // big beat digit
+    const live = now - d.lastT < 2000 && d.count > 0;
+    ctx2d.font = `800 ${Math.max(18, r * 0.34)}px -apple-system, sans-serif`;
+    ctx2d.fillStyle = live ? (d.count === 1 ? `rgba(255,160,40,${0.7 + f * 0.3})` : `rgba(255,255,255,${0.7 + f * 0.3})`) : "rgba(255,255,255,0.25)";
+    ctx2d.fillText(live ? String(d.count) : "–", cx, cy - r * 0.02);
+    ctx2d.font = `700 ${Math.max(12, r * 0.15)}px -apple-system, sans-serif`;
     ctx2d.fillStyle = "rgba(255,255,255,0.92)";
-    ctx2d.font = `700 ${Math.max(14, r * 0.22)}px -apple-system, sans-serif`;
-    ctx2d.fillText(bpm.toFixed(1), cx, cy + r * 0.06);
-    ctx2d.font = `600 ${Math.max(9, r * 0.09)}px -apple-system, sans-serif`;
+    ctx2d.fillText(bpm ? bpm.toFixed(1) : "--", cx, cy + r * 0.2);
+    ctx2d.font = `600 ${Math.max(9, r * 0.08)}px -apple-system, sans-serif`;
     ctx2d.fillStyle = "rgba(255,255,255,0.5)";
-    ctx2d.fillText(label + " · BPM", cx, cy + r * 0.22);
+    ctx2d.fillText(label + " · BPM", cx, cy + r * 0.32);
+    // 4 beat pads under platter
+    const pw = r * 0.36, ph = Math.max(8 * dpr, r * 0.13), gap = r * 0.08;
+    const px0 = cx - (pw * 4 + gap * 3) / 2, py = cy + r + 10 * dpr;
+    for (let q = 1; q <= 4; q++) {
+      const on = live && q === d.count;
+      const c = q === 1 ? "255,150,30" : "0,220,255";
+      ctx2d.fillStyle = on ? `rgba(${c},${0.65 + f * 0.35})` : `rgba(${c},0.14)`;
+      if (on) { ctx2d.shadowColor = `rgba(${c},0.9)`; ctx2d.shadowBlur = (6 + f * 16) * dpr; }
+      ctx2d.fillRect(px0 + (q - 1) * (pw + gap), py, pw, ph);
+      ctx2d.shadowBlur = 0;
+    }
   }
   function drawDecksMode(w, h, now) {
     sxTickFlash();
+    deckDetect(now);
     ctx2d.fillStyle = "#030405";
     ctx2d.fillRect(0, 0, w, h);
     const padX = w * 0.03;
-    const stripH = Math.max(18 * dpr, h * 0.07);
-    const sy = h * 0.1;
+    const stripH = Math.max(40 * dpr, h * 0.14);
+    const sy = h * 0.08;
     sxStrip(padX, sy, w - padX * 2, stripH, now, 0);
     sxStrip(padX, sy + stripH + 6 * dpr, w - padX * 2, stripH, now, 1);
-    const areaTop = sy + stripH * 2 + 16 * dpr, areaBot = h * 0.94;
-    const r = Math.max(20, Math.min(w * 0.22, (areaBot - areaTop) * 0.46));
-    const cy = (areaTop + areaBot) / 2;
-    sxPlatter(w * 0.27, cy, r, now, "DECK 1");
-    sxPlatter(w * 0.73, cy, r, now, "DECK 2");
+    const areaTop = sy + stripH * 2 + 14 * dpr, areaBot = h * 0.9;
+    const r = Math.max(20, Math.min(w * 0.21, (areaBot - areaTop) * 0.4));
+    const cy = (areaTop + areaBot) / 2 - 8 * dpr;
+    sxPlatter(w * 0.27, cy, r, now, "DECK 1", decks[0]);
+    sxPlatter(w * 0.73, cy, r, now, "DECK 2", decks[1]);
   }
   let wvSeenPulse = 0;
   let wvSeenBoom = 0;
@@ -3458,7 +3584,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=22", { updateViaCache: "none" }).catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=23", { updateViaCache: "none" }).catch(() => {});
     });
   }
 
