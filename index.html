@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <title>Lighto</title>
-  <link rel="stylesheet" href="styles.css?v=23" />
+  <link rel="stylesheet" href="styles.css?v=24" />
 </head>
 <body>
   <div class="chassis" id="app">
@@ -78,6 +78,7 @@
         <span class="bpm-value" id="bpmCornerValue">--.-</span>
       </div>
       <div class="mode-toast" id="modeToast" aria-hidden="true"></div>
+      <div class="mode-menu" id="modeMenu" role="menu" aria-label="Modes" hidden></div>
       <div class="overlay" id="overlay">
         <button type="button" class="tap-btn" id="startBtn">Tap to listen</button>
         <p class="hint">Uses your mic · Safari needs a tap + permission</p>
@@ -94,6 +95,7 @@
         <button type="button" class="ctrl-btn" id="toggleBtn" disabled>Stop</button>
         <button type="button" class="ctrl-btn party-btn" id="partyBtn" aria-pressed="false">Party</button>
         <button type="button" class="ctrl-btn mode-btn" id="modeBtn">Mode: Classic</button>
+        <button type="button" class="ctrl-btn modes-btn" id="modesBtn" aria-expanded="false" aria-controls="modeMenu" title="All modes">☰ Modes</button>
         <button type="button" class="ctrl-btn colors-btn" id="colorsBtn" aria-expanded="false" aria-controls="themeSheet">Colors</button>
         <label class="sens">
           <span>Sens</span>
@@ -133,7 +135,7 @@
       </div>
     </footer>
   </div>
-  <script src="themes.js?v=23"></script>
-  <script src="app.js?v=23"></script>
+  <script src="themes.js?v=24"></script>
+  <script src="app.js?v=24"></script>
 </body>
 </html>

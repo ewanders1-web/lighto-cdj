@@ -29,6 +29,8 @@
     partyHint: document.getElementById("partyHint"),
     colorsBtn: document.getElementById("colorsBtn"),
     modeBtn: document.getElementById("modeBtn"),
+    modesBtn: document.getElementById("modesBtn"),
+    modeMenu: document.getElementById("modeMenu"),
     modeToast: document.getElementById("modeToast"),
     themeSheet: document.getElementById("themeSheet"),
     themeChips: document.getElementById("themeChips"),
@@ -241,6 +243,12 @@
     { id: "vertical", name: "Vertical" },
     { id: "stems", name: "Stems" },
     { id: "decks", name: "Decks" },
+    { id: "scratchglitch", name: "Scratch Glitch" },
+    { id: "scratchplatter", name: "Scratch Platter" },
+    { id: "vhs", name: "VHS Glitch" },
+    { id: "split", name: "Split Screen" },
+    { id: "lighttrails", name: "Light Trails" },
+    { id: "skratchbastid", name: "Skratch Bastid" },
   ];
   let modeIndex = 0;
   let modeToastTimer = 0;
@@ -274,10 +282,36 @@
     }
   }
 
-  function cycleMode() {
-    modeIndex = (modeIndex + 1) % MODES.length;
+  function cycleMode(step) {
+    modeIndex = (modeIndex + (step || 1) + MODES.length) % MODES.length;
     setMode(MODES[modeIndex].id, true);
     showModeToast();
+  }
+
+  // v24: mode menu (grid of every mode)
+  let modeMenuOpen = false;
+  function buildModeMenu() {
+    if (!els.modeMenu) return;
+    els.modeMenu.innerHTML = "";
+    MODES.forEach((m, i) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "mode-item"; b.textContent = m.name; b.dataset.mode = m.id;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setMode(m.id, true); showModeToast(); setModeMenu(false);
+      });
+      els.modeMenu.appendChild(b);
+    });
+  }
+  function setModeMenu(open) {
+    if (!els.modeMenu) return;
+    modeMenuOpen = !!open;
+    els.modeMenu.hidden = !modeMenuOpen;
+    if (els.modesBtn) els.modesBtn.setAttribute("aria-expanded", String(modeMenuOpen));
+    if (modeMenuOpen) {
+      els.modeMenu.querySelectorAll(".mode-item").forEach((b) => b.classList.toggle("active", b.dataset.mode === MODES[modeIndex].id));
+      const a = els.modeMenu.querySelector(".active"); if (a && a.scrollIntoView) a.scrollIntoView({ block: "nearest" });
+    }
   }
 
   function restoreMode() {
@@ -3124,6 +3158,421 @@
     ctx2d.stroke();
   }
 
+  // ---- v24: Scratch / battle-DJ modes (shared scratch + vocal analysis) ----
+  const SK = { hiPrev: null, hiAvg: 0, fluxAvg: 0, scratch: 0, scratchT: 0, scratchN: 0, dir: 1,
+    midSlow: 0, hiSlow: 0, kickSlow: 0, vocal: 0, kickFlash: 0, seenK: 0, seenB: 0, drop: 0, last: 0, dt: 16.7 };
+  function skAnalyze(now, kick, energy, sens) {
+    SK.dt = SK.last ? Math.min(50, now - SK.last) : 16.7; SK.last = now;
+    deckDetect(now);
+    const n = freqData.length;
+    const hz = (audioCtx ? audioCtx.sampleRate : 48000) / (analyser ? analyser.fftSize : 2048);
+    const b = (f) => Math.max(1, Math.min(n - 1, Math.round(f / hz)));
+    const h0 = b(2000), h1 = b(12000), m0 = b(300), m1 = b(3000);
+    if (!SK.hiPrev || SK.hiPrev.length !== n) SK.hiPrev = new Float32Array(n);
+    let hs = 0, flux = 0, ms = 0;
+    for (let j = h0; j <= h1; j++) { const v = freqData[j] / 255; hs += v; const d = v - SK.hiPrev[j]; if (d > 0) flux += d; SK.hiPrev[j] = v; }
+    for (let j = m0; j <= m1; j++) ms += freqData[j] / 255;
+    const hiE = Math.min(1, (hs / (h1 - h0 + 1)) * sens * 1.6);
+    const midE = Math.min(1, (ms / (m1 - m0 + 1)) * sens * 1.2);
+    flux = (flux / (h1 - h0 + 1)) * sens * 4;
+    const live = energy > 0.025; // never fire on silence
+    const isScr = live && now - SK.scratchT > 55 &&
+      ((hiE > 0.07 && hiE > SK.hiAvg * 1.45 && hiE - SK.hiAvg > 0.03) || (flux > 0.05 && flux > SK.fluxAvg * 2.3));
+    SK.hiAvg = SK.hiAvg * 0.94 + hiE * 0.06;
+    SK.fluxAvg = SK.fluxAvg * 0.92 + flux * 0.08;
+    if (isScr) {
+      SK.scratchT = now; SK.scratchN++; SK.dir = Math.random() < 0.5 ? -1 : 1;
+      SK.scratch = Math.min(1, Math.max(SK.scratch, 0.55 + flux * 2 + (hiE - SK.hiAvg) * 3));
+    }
+    SK.scratch *= 0.88;
+    SK.midSlow = SK.midSlow * 0.96 + midE * 0.04;
+    SK.hiSlow = SK.hiSlow * 0.96 + hiE * 0.04;
+    SK.kickSlow = SK.kickSlow * 0.96 + kick * 0.04;
+    const voc = live && SK.midSlow > 0.12 && SK.midSlow > SK.hiSlow * 1.35 && SK.midSlow > SK.kickSlow * 0.85 && SK.scratch < 0.25;
+    SK.vocal += ((voc ? 1 : 0) - SK.vocal) * 0.04;
+    SK.midE = midE; SK.hiE = hiE;
+    // Kicks: reuse deck-1 (kick/bass) detector + main 808 detector
+    const d0 = decks[0];
+    if (d0.lastT && d0.lastT !== SK.seenK) { SK.seenK = d0.lastT; SK.kickFlash = Math.max(SK.kickFlash, d0.down ? 1 : 0.8); SK.kickEv = now; }
+    const bm = newestSince(booms, SK.seenB);
+    if (bm) { SK.seenB = bm.t0; SK.kickFlash = 1; if ((bm.strength || 0) > 0.75 && now - (SK.dropT || 0) > 4000) { SK.drop = 1; SK.dropT = now; } }
+    if (!live) { SK.kickFlash *= 0.8; SK.scratch *= 0.7; }
+    SK.kickFlash *= 0.9; SK.drop *= 0.93;
+  }
+  const skLand = (w, h) => w > h;
+  const skHot = (now) => now - SK.scratchT < 140;
+  function skBpmText(now) {
+    const b = deckBpm(decks[0], now) || (bpmConfident && bpmDisplay > 0 ? bpmDisplay : 0);
+    return b ? b.toFixed(1) : "--.-";
+  }
+  function skCol(i) { const j = wvAt(i); return spectralColor(wvBass[j] + 0.1, wvMid[j], wvHigh[j], wvAmp[j] + 0.3); }
+  // Circular overview waveform wrapped around a ring (rotates with ang)
+  function skRingWave(cx, cy, r, depth, ang, segs) {
+    const step = Math.max(1, Math.floor(Math.min(wvFilled, 360) / segs));
+    ctx2d.lineWidth = Math.max(1.5 * dpr, (Math.PI * 2 * r) / segs * 0.8);
+    for (let i = 0; i < segs; i++) {
+      const j = wvAt(i * step), a = ang - (i / segs) * Math.PI * 2;
+      const amp = Math.min(1, wvAmp[j] * 1.6), [cr, cg, cb] = skCol(i * step);
+      const c = Math.cos(a), s = Math.sin(a), r0 = r - amp * depth * 0.45, r1 = r + amp * depth * 0.55;
+      ctx2d.strokeStyle = hueRgba(cr, cg, cb, 0.35 + amp * 0.65);
+      ctx2d.beginPath(); ctx2d.moveTo(cx + c * r0, cy + s * r0); ctx2d.lineTo(cx + c * r1, cy + s * r1); ctx2d.stroke();
+    }
+  }
+  function skPlatterBody(cx, cy, r, ang, glow) {
+    ctx2d.fillStyle = "#0a0b0e";
+    ctx2d.beginPath(); ctx2d.arc(cx, cy, r, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.strokeStyle = "rgba(255,255,255,0.07)"; ctx2d.lineWidth = dpr;
+    for (let k = 1; k <= 4; k++) { ctx2d.beginPath(); ctx2d.arc(cx, cy, r * (0.25 + k * 0.17), 0, Math.PI * 2); ctx2d.stroke(); }
+    ctx2d.strokeStyle = rgbaOf(CYAN, 0.25 + glow * 0.6); ctx2d.lineWidth = (1.5 + glow * 3) * dpr;
+    ctx2d.beginPath(); ctx2d.arc(cx, cy, r, 0, Math.PI * 2); ctx2d.stroke();
+    ctx2d.strokeStyle = "rgba(255,255,255,0.18)"; ctx2d.lineWidth = 2 * dpr;
+    ctx2d.beginPath(); ctx2d.moveTo(cx + Math.cos(ang) * r * 0.2, cy + Math.sin(ang) * r * 0.2); ctx2d.lineTo(cx + Math.cos(ang) * r * 0.85, cy + Math.sin(ang) * r * 0.85); ctx2d.stroke();
+  }
+  function skPlayhead(cx, cy, r) {
+    ctx2d.fillStyle = "#fff"; ctx2d.shadowColor = "#fff"; ctx2d.shadowBlur = 10 * dpr;
+    ctx2d.fillRect(cx - 1.5 * dpr, cy - r * 1.16, 3 * dpr, r * 0.32); ctx2d.shadowBlur = 0;
+  }
+  // Platter physics: steady beat spin, jerks back & forth on scratches
+  function mkSpin() { return { ang: 0, vel: 0, jerkT: 0 }; }
+  function skSpin(sp, now, gain) {
+    const base = (sxBpm() / 90) * 0.0021 * (energyLive ? 1 : 0.15); // rad/ms (~33rpm-ish)
+    if (SK.scratchT > sp.jerkT) { sp.jerkT = SK.scratchT; sp.vel = SK.dir * (0.012 + SK.scratch * 0.03) * (gain || 1); }
+    sp.vel += (base - sp.vel) * 0.08;
+    sp.ang += sp.vel * SK.dt;
+    return sp.ang;
+  }
+  let energyLive = false;
+  function skBg(a) { ctx2d.fillStyle = `rgba(3,4,6,${a})`; ctx2d.fillRect(0, 0, els.canvas.width, els.canvas.height); }
+  function skKickGlow(w, h, amt) {
+    if (amt < 0.02) return;
+    const g = ctx2d.createRadialGradient(w / 2, h * 1.05, 0, w / 2, h * 1.05, Math.max(w, h) * (0.45 + amt * 0.55));
+    g.addColorStop(0, rgbaOf(ORANGE, 0.75 * amt)); g.addColorStop(0.45, rgbaOf(BOOM || ORANGE, 0.3 * amt)); g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx2d.fillStyle = g; ctx2d.fillRect(0, 0, w, h);
+  }
+  // One low-res snapshot per frame (self-drawImage is costly on mobile)
+  let skSnapCv = null, skSnapT = -1;
+  function skSnap(w, h, now) {
+    if (!skSnapCv) skSnapCv = document.createElement("canvas");
+    const sw = Math.max(1, Math.round(w / 3)), sh = Math.max(1, Math.round(h / 3));
+    if (skSnapCv.width !== sw || skSnapCv.height !== sh) { skSnapCv.width = sw; skSnapCv.height = sh; skSnapT = -1; }
+    if (skSnapT !== now) { skSnapCv.getContext("2d").drawImage(els.canvas, 0, 0, sw, sh); skSnapT = now; }
+    return skSnapCv;
+  }
+  function skTears(w, h, amt, n) {
+    if (amt < 0.15 || n < 1) return;
+    const sn = skSnap(w, h, SK.last), k = sn.width / w;
+    for (let i = 0; i < Math.min(n, 4); i++) {
+      const y = Math.random() * h, hh = (4 + Math.random() * 30) * dpr, dx = (Math.random() - 0.5) * amt * 60 * dpr;
+      ctx2d.drawImage(sn, 0, y * k, sn.width, Math.max(1, hh * k), dx, y, w, hh);
+    }
+  }
+  let skNoise = null;
+  function skStatic(w, h, amt) {
+    if (amt < 0.05) return;
+    if (!skNoise) {
+      skNoise = document.createElement("canvas"); skNoise.width = skNoise.height = 128;
+      const c = skNoise.getContext("2d"), id = c.createImageData(128, 128);
+      for (let i = 0; i < id.data.length; i += 4) { const v = Math.random() * 255; id.data[i] = id.data[i + 1] = id.data[i + 2] = v; id.data[i + 3] = 255; }
+      c.putImageData(id, 0, 0);
+    }
+    ctx2d.save(); ctx2d.globalAlpha = Math.min(0.45, amt * 0.45); ctx2d.globalCompositeOperation = "lighter";
+    const s = 2 * dpr, bands = 1 + Math.floor(amt * 4);
+    for (let b = 0; b < bands; b++) {
+      const y = Math.random() * h, bh = (20 + Math.random() * 80) * dpr;
+      ctx2d.translate(-Math.random() * 128 * s, y);
+      ctx2d.fillStyle = ctx2d.createPattern(skNoise, "repeat"); ctx2d.scale(s, s);
+      ctx2d.fillRect(0, 0, (w + 256 * s) / s, bh / s);
+      ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+    }
+    ctx2d.restore();
+  }
+  let skScan = null;
+  function skScanlines(w, h, a) {
+    if (!skScan) { skScan = document.createElement("canvas"); skScan.width = 1; skScan.height = 4; const c = skScan.getContext("2d"); c.fillStyle = "rgba(0,0,0,0.55)"; c.fillRect(0, 0, 1, 2); }
+    ctx2d.save(); ctx2d.globalAlpha = a; ctx2d.fillStyle = ctx2d.createPattern(skScan, "repeat"); ctx2d.fillRect(0, 0, w, h); ctx2d.restore();
+  }
+  // Scrolling Serato waveform (newest at right), returns nothing
+  function skWave(x0, y0, ww, hh, colPx, alpha, ox, tint) {
+    const cols = Math.min(wvFilled, Math.floor(ww / colPx));
+    const mid = y0 + hh / 2;
+    for (let i = 0; i < cols; i++) {
+      const j = wvAt(i), amp = Math.min(1, wvAmp[j] * 1.5), x = x0 + ww - (i + 1) * colPx + (ox || 0);
+      const half = Math.max(dpr * 0.5, amp * hh * 0.48);
+      if (tint) ctx2d.fillStyle = tint; else { const [r, g, b] = skCol(i); ctx2d.fillStyle = hueRgba(r, g, b, alpha); }
+      ctx2d.fillRect(x, mid - half, Math.max(1, colPx - 0.3), half * 2);
+    }
+  }
+
+  // 1) Scratch Glitch
+  const sgSpin = mkSpin(); const sgStreaks = [];
+  function drawScratchGlitchMode(w, h, now) {
+    skBg(0.5);
+    const m = Math.min(w, h), land = skLand(w, h);
+    skKickGlow(w, h, SK.kickFlash);
+    const hot = SK.scratch, calm = SK.vocal;
+    const cx = w / 2 + (hot > 0.2 ? (Math.random() - 0.5) * hot * 22 * dpr : 0);
+    const cy = h * (land ? 0.48 : 0.42) + (hot > 0.2 ? (Math.random() - 0.5) * hot * 14 * dpr : 0);
+    const r = m * (land ? 0.3 : 0.34) * (1 + SK.kickFlash * 0.04);
+    const ang = skSpin(sgSpin, now, 1.4) + (hot > 0.2 ? (Math.random() - 0.5) * hot * 0.5 : 0);
+    const plat = (dx, tintR) => {
+      if (tintR) { ctx2d.strokeStyle = tintR; ctx2d.lineWidth = 4 * dpr; ctx2d.beginPath(); ctx2d.arc(cx + dx, cy, r, 0, Math.PI * 2); ctx2d.stroke();
+        ctx2d.beginPath(); ctx2d.moveTo(cx + dx, cy); ctx2d.lineTo(cx + dx + Math.cos(ang) * r, cy + Math.sin(ang) * r); ctx2d.stroke(); return; }
+      skPlatterBody(cx, cy, r * (1 - calm * 0.25), ang, SK.kickFlash);
+      skRingWave(cx, cy, r * (1 - calm * 0.25) * 1.08, r * 0.28, ang, 96);
+    };
+    ctx2d.globalAlpha = 1 - calm * 0.65; plat(0); ctx2d.globalAlpha = 1;
+    if (hot > 0.12) {
+      const off = hot * 16 * dpr;
+      ctx2d.save(); ctx2d.globalCompositeOperation = "lighter";
+      plat(-off, `rgba(255,30,50,${0.7 * hot})`); plat(off, `rgba(40,90,255,${0.7 * hot})`);
+      ctx2d.restore();
+    }
+    // light streaks
+    if (skHot(now) && sgStreaks.length < 40) for (let k = 0; k < 4; k++) sgStreaks.push({ y: Math.random() * h, x: Math.random() * w, v: (SK.dir * (20 + Math.random() * 50)) * dpr, l: (60 + Math.random() * 220) * dpr, a: 1, c: Math.random() < 0.5 ? "255,40,60" : Math.random() < 0.5 ? "60,120,255" : "255,255,255" });
+    ctx2d.save(); ctx2d.globalCompositeOperation = "lighter";
+    for (let i = sgStreaks.length - 1; i >= 0; i--) {
+      const s = sgStreaks[i]; s.x += s.v; s.a *= 0.86;
+      if (s.a < 0.04) { sgStreaks.splice(i, 1); continue; }
+      const g = ctx2d.createLinearGradient(s.x - s.l * Math.sign(s.v), 0, s.x, 0);
+      g.addColorStop(0, `rgba(${s.c},0)`); g.addColorStop(1, `rgba(${s.c},${s.a})`);
+      ctx2d.fillStyle = g; ctx2d.fillRect(Math.min(s.x, s.x - s.l * Math.sign(s.v)), s.y, s.l, 2 * dpr);
+    }
+    ctx2d.restore();
+    // vocals: mirrored center wave
+    if (calm > 0.05 && timeData) {
+      const amp = h * 0.16 * (0.5 + (SK.midE || 0) * 1.4), N = 160, step = Math.floor(timeData.length / N);
+      for (const mir of [1, -1]) {
+        ctx2d.beginPath();
+        for (let i = 0; i <= N; i++) {
+          const v = Math.abs((timeData[Math.min(timeData.length - 1, i * step)] - 128) / 128);
+          const x = (i / N) * w, y = h / 2 - mir * v * amp * Math.sin((i / N) * Math.PI);
+          i ? ctx2d.lineTo(x, y) : ctx2d.moveTo(x, y);
+        }
+        ctx2d.strokeStyle = hueRgba(...bandColorAt(0.5, 1), calm * 0.9); ctx2d.lineWidth = 2.5 * dpr;
+        ctx2d.shadowColor = rgbaOf(CYAN, 0.8); ctx2d.shadowBlur = 12 * dpr * calm; ctx2d.stroke(); ctx2d.shadowBlur = 0;
+      }
+    }
+    if (hot > 0.35) skTears(w, h, hot, 3);
+  }
+
+  // 2) Scratch Platter
+  const spSpin = mkSpin();
+  function drawScratchPlatterMode(w, h, now) {
+    skBg(1);
+    const land = skLand(w, h), m = Math.min(w, h);
+    const r = m * (land ? 0.36 : 0.38), cx = w / 2, cy = land ? h * 0.5 : h * 0.44;
+    const ang = skSpin(spSpin, now, 1.6);
+    ctx2d.fillStyle = rgbaOf(CYAN, 0.05 + SK.kickFlash * 0.08); ctx2d.beginPath(); ctx2d.arc(cx, cy, r * 1.35, 0, Math.PI * 2); ctx2d.fill();
+    skPlatterBody(cx, cy, r * 0.82, ang, SK.kickFlash);
+    skRingWave(cx, cy, r, r * 0.3, ang - Math.PI / 2, 160);
+    // dot marker on vinyl
+    ctx2d.fillStyle = rgbaOf(ORANGE, 0.95);
+    ctx2d.beginPath(); ctx2d.arc(cx + Math.cos(ang) * r * 0.7, cy + Math.sin(ang) * r * 0.7, 5 * dpr, 0, Math.PI * 2); ctx2d.fill();
+    skPlayhead(cx, cy, r);
+    // Serato BPM readout
+    ctx2d.textAlign = "center";
+    ctx2d.font = `800 ${Math.round(r * 0.26)}px -apple-system, sans-serif`; ctx2d.fillStyle = "#fff";
+    ctx2d.fillText(skBpmText(now), cx, cy + r * 0.06);
+    ctx2d.font = `700 ${Math.round(r * 0.08)}px -apple-system, sans-serif`; ctx2d.fillStyle = "rgba(255,255,255,0.55)";
+    ctx2d.fillText("BPM", cx, cy + r * 0.2);
+    const scr = skHot(now) ? (SK.dir > 0 ? "▶▶ SCRATCH" : "◀◀ SCRATCH") : "";
+    ctx2d.fillStyle = `rgba(255,60,80,${Math.min(1, SK.scratch * 1.5)})`;
+    ctx2d.fillText(scr, cx, cy - r * 0.22);
+    const wy = land ? h * 0.9 : cy + r * 1.3;
+    skWave(w * 0.05, wy, w * 0.9, Math.min(h * 0.08, 60 * dpr), 2 * dpr, 0.9);
+  }
+
+  // 3) VHS Glitch
+  function drawVhsMode(w, h, now) {
+    skBg(1);
+    const g = Math.min(1, SK.scratch + SK.drop * 0.8);
+    const land = skLand(w, h);
+    const sy = h * (land ? 0.12 : 0.2), sh = h * (land ? 0.5 : 0.38);
+    const draw = (ox, tint) => {
+      skWave(0, sy, w, sh, 3 * dpr, 0.95, ox, tint);
+      const bw = w / BAR_COUNT, base = h * 0.94;
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const v = smoothed[i], bh = v * h * 0.28;
+        if (tint) ctx2d.fillStyle = tint; else { const [r, gg, b] = bandColorAt(i / BAR_COUNT, v + 0.3); ctx2d.fillStyle = hueRgba(r, gg, b, 0.9); }
+        ctx2d.fillRect(i * bw + 1 + (ox || 0), base - bh, bw - 2, bh);
+      }
+    };
+    if (g > 0.08) {
+      ctx2d.save(); ctx2d.globalCompositeOperation = "lighter";
+      draw(-g * 14 * dpr, "rgba(255,0,40,0.55)"); draw(g * 14 * dpr, "rgba(0,80,255,0.55)");
+      ctx2d.restore();
+    }
+    draw(0);
+    skTears(w, h, g, Math.floor(g * 5));
+    skStatic(w, h, g);
+    // rolling tracking bar
+    const ty = ((now * 0.12) % (h * 1.4)) - h * 0.2;
+    ctx2d.fillStyle = `rgba(255,255,255,${0.04 + g * 0.08})`; ctx2d.fillRect(0, ty, w, 18 * dpr);
+    skScanlines(w, h, 0.6);
+    ctx2d.font = `700 ${Math.round(14 * dpr)}px Menlo, monospace`; ctx2d.textAlign = "left";
+    ctx2d.fillStyle = `rgba(255,255,255,${0.6 + (Math.floor(now / 500) % 2) * 0.3})`;
+    ctx2d.fillText("▶ PLAY  SP  " + skBpmText(now) + " BPM", 14 * dpr, h * 0.07);
+  }
+
+  // 4) Split Screen
+  const SPLIT_LAYOUTS = {
+    land: [[[0.03, 0.06, 0.3, 0.88], [0.35, 0.06, 0.62, 0.56], [0.35, 0.66, 0.4, 0.28], [0.77, 0.66, 0.2, 0.28]],
+           [[0.03, 0.06, 0.62, 0.56], [0.67, 0.06, 0.3, 0.88], [0.03, 0.66, 0.2, 0.28], [0.25, 0.66, 0.4, 0.28]],
+           [[0.35, 0.06, 0.3, 0.6], [0.03, 0.06, 0.3, 0.88], [0.67, 0.06, 0.3, 0.6], [0.35, 0.7, 0.62, 0.24]]],
+    port: [[[0.05, 0.05, 0.9, 0.36], [0.05, 0.44, 0.9, 0.26], [0.05, 0.73, 0.6, 0.22], [0.68, 0.73, 0.27, 0.22]],
+           [[0.05, 0.05, 0.9, 0.26], [0.05, 0.34, 0.9, 0.36], [0.38, 0.73, 0.57, 0.22], [0.05, 0.73, 0.3, 0.22]],
+           [[0.05, 0.38, 0.55, 0.3], [0.05, 0.05, 0.9, 0.3], [0.63, 0.38, 0.32, 0.3], [0.05, 0.71, 0.9, 0.24]]] };
+  const SP = { lay: 0, order: [0, 1, 2, 3], cur: null, downs: 0, seenDown: 0, spec: null, spin: mkSpin() };
+  function drawSplitMode(w, h, now) {
+    const land = skLand(w, h), set = SPLIT_LAYOUTS[land ? "land" : "port"];
+    const d0 = decks[0];
+    if (d0.down && d0.lastT !== SP.seenDown) {
+      SP.seenDown = d0.lastT; SP.downs++;
+      if (SP.downs % 4 === 0) { SP.lay = (SP.lay + 1) % set.length; SP.order.sort(() => Math.random() - 0.5); }
+    }
+    // blurred dim backdrop (soft color blobs)
+    skBg(1);
+    const lv = bandLevels();
+    [[0.2, 0.3, lv[0], 0.1], [0.75, 0.6, lv[1], 0.5], [0.5, 0.9, lv[2], 0.9]].forEach(([x, y, v, t]) => {
+      const gr = ctx2d.createRadialGradient(w * x, h * y, 0, w * x, h * y, Math.max(w, h) * 0.5);
+      const [r, g, b] = bandColorAt(t, 1); gr.addColorStop(0, hueRgba(r, g, b, 0.08 + v * 0.25)); gr.addColorStop(1, "rgba(0,0,0,0)");
+      ctx2d.fillStyle = gr; ctx2d.fillRect(0, 0, w, h);
+    });
+    const tgt = set[SP.lay % set.length];
+    if (!SP.cur || SP.cur.length !== 4 || SP.land !== land) { SP.cur = tgt.map((r) => r.slice()); SP.land = land; }
+    for (let p = 0; p < 4; p++) {
+      const t = tgt[SP.order[p]], c = SP.cur[p];
+      for (let k = 0; k < 4; k++) c[k] += (t[k] - c[k]) * 0.12;
+      const x = c[0] * w, y = c[1] * h, pw = c[2] * w, ph = c[3] * h, rad = 14 * dpr;
+      ctx2d.fillStyle = "rgba(10,12,16,0.82)"; roundRectPath(x, y, pw, ph, rad); ctx2d.fill();
+      ctx2d.strokeStyle = rgbaOf(CYAN, 0.25 + SK.kickFlash * 0.4); ctx2d.lineWidth = 1.5 * dpr; ctx2d.stroke();
+      ctx2d.save(); roundRectPath(x, y, pw, ph, rad); ctx2d.clip();
+      if (p === 0) { // platter
+        const r = Math.min(pw, ph) * 0.36, cx = x + pw / 2, cy = y + ph / 2, a = skSpin(SP.spin, now, 1.2);
+        skPlatterBody(cx, cy, r * 0.8, a, SK.kickFlash); skRingWave(cx, cy, r, r * 0.3, a, 90); skPlayhead(cx, cy, r);
+      } else if (p === 1) { // big scrolling spectrum (spectrogram)
+        const cw = Math.max(2, Math.round(2 * dpr));
+        if (!SP.spec) { SP.spec = document.createElement("canvas"); SP.spec.width = 600; SP.spec.height = BAR_COUNT; }
+        const sc = SP.spec.getContext("2d");
+        sc.drawImage(SP.spec, -2, 0);
+        for (let i = 0; i < BAR_COUNT; i++) { const v = smoothed[i], [r, g, b] = bandColorAt(i / BAR_COUNT, v + 0.2); sc.fillStyle = hueRgba(r, g, b, Math.min(1, v * 1.4)); sc.clearRect(598, BAR_COUNT - 1 - i, 2, 1); sc.fillRect(598, BAR_COUNT - 1 - i, 2, 1); }
+        ctx2d.imageSmoothingEnabled = true; ctx2d.drawImage(SP.spec, x, y, pw, ph); void cw;
+      } else if (p === 2) { // beat grid 1-4
+        const live = now - d0.lastT < 2000 && d0.count > 0, n = live ? d0.count : 0;
+        const cw = (pw - 10 * dpr * 5) / 4;
+        for (let q = 1; q <= 4; q++) {
+          const on = q === n, col = q === 1 ? ORANGE : CYAN;
+          ctx2d.fillStyle = rgbaOf(col, on ? 0.6 + d0.flash * 0.4 : 0.12);
+          roundRectPath(x + 10 * dpr + (q - 1) * (cw + 10 * dpr), y + ph * 0.2, cw, ph * 0.6, 8 * dpr); ctx2d.fill();
+          ctx2d.fillStyle = on ? "#000" : "rgba(255,255,255,0.5)"; ctx2d.textAlign = "center";
+          ctx2d.font = `800 ${Math.round(Math.min(cw, ph) * 0.4)}px -apple-system, sans-serif`;
+          ctx2d.fillText(String(q), x + 10 * dpr + (q - 1) * (cw + 10 * dpr) + cw / 2, y + ph * 0.5 + Math.min(cw, ph) * 0.14);
+        }
+        ctx2d.font = `700 ${Math.round(11 * dpr)}px -apple-system, sans-serif`; ctx2d.fillStyle = "rgba(255,255,255,0.6)";
+        ctx2d.fillText(skBpmText(now) + " BPM", x + pw / 2, y + ph * 0.14);
+      } else { // level meter
+        const segs = 16, lvl = Math.min(1, Math.max(meterCh1, meterCh2, (lv[0] + lv[1]) * 0.8));
+        const vert = ph > pw * 0.6, sw = vert ? pw * 0.5 : (pw - 20 * dpr) / segs, shh = vert ? (ph - 20 * dpr) / segs : ph * 0.5;
+        for (let s = 0; s < segs; s++) {
+          const on = s / segs < lvl, col = s > segs * 0.85 ? [255, 40, 40] : s > segs * 0.65 ? [255, 170, 30] : [40, 230, 120];
+          ctx2d.fillStyle = `rgba(${col},${on ? 0.95 : 0.12})`;
+          if (vert) ctx2d.fillRect(x + pw * 0.25, y + ph - 10 * dpr - (s + 1) * shh + 1, sw, shh - 2);
+          else ctx2d.fillRect(x + 10 * dpr + s * sw, y + ph * 0.25, sw - 2, shh);
+        }
+      }
+      ctx2d.restore();
+    }
+  }
+
+  // 5) Light Trails
+  let ltCv = null; const ltP = [];
+  function drawLightTrailsMode(w, h, now) {
+    if (!ltCv || ltCv.width !== w || ltCv.height !== h) { ltCv = document.createElement("canvas"); ltCv.width = w; ltCv.height = h; }
+    const c = ltCv.getContext("2d");
+    c.globalCompositeOperation = "source-over"; c.fillStyle = "rgba(2,3,5,0.06)"; c.fillRect(0, 0, w, h);
+    const cap = Math.round(Math.min(420, (w * h) / (dpr * dpr) / 900));
+    const cols = ["255,40,60", "60,130,255", "255,255,255"];
+    const N = 64, base = h * 0.94;
+    const peaks = [];
+    for (let i = 0; i < N; i++) { const v = smoothed[Math.floor((i / N) * BAR_COUNT)]; peaks.push(v); }
+    const emit = (x, y, vx, vy, smear) => { if (ltP.length < cap) ltP.push({ x, y, vx, vy, l: 1, s: smear, c: cols[(Math.random() * 3) | 0] }); };
+    for (let i = 0; i < N; i++) if (energyLive && peaks[i] > 0.3 && Math.random() < peaks[i] * 0.12) emit((i + 0.5) / N * w, base - peaks[i] * h * 0.15, (Math.random() - 0.5) * 0.3 * dpr, -(0.6 + peaks[i] * 1.6) * dpr, 0);
+    if (skHot(now)) for (let k = 0; k < 10; k++) emit(Math.random() * w, base - Math.random() * h * 0.3, SK.dir * (8 + Math.random() * 14) * dpr, -(0.5 + Math.random()) * dpr, 1);
+    if (SK.kickFlash > 0.75 && now - (SK.kickEv || 0) < 20) for (let k = 0; k < 30; k++) { const a = -Math.PI * Math.random(); const v = (2 + Math.random() * 4) * dpr; emit(w / 2, base, Math.cos(a) * v, Math.sin(a) * v, 0); }
+    c.globalCompositeOperation = "lighter";
+    for (let i = ltP.length - 1; i >= 0; i--) {
+      const p = ltP[i], ox = p.x, oy = p.y;
+      p.x += p.vx; p.y += p.vy; p.vx *= p.s ? 0.93 : 0.99; p.vy *= 0.995; p.l -= p.s ? 0.02 : 0.006;
+      if (p.l <= 0 || p.y < -20) { ltP.splice(i, 1); continue; }
+      c.strokeStyle = `rgba(${p.c},${p.l * 0.8})`; c.lineWidth = (p.s ? 2 : 2.5) * dpr;
+      c.beginPath(); c.moveTo(ox, oy); c.lineTo(p.x, p.y); c.stroke();
+    }
+    ctx2d.drawImage(ltCv, 0, 0);
+    // live bottom waveform
+    ctx2d.beginPath(); ctx2d.moveTo(0, base);
+    for (let i = 0; i < N; i++) ctx2d.lineTo((i + 0.5) / N * w, base - peaks[i] * h * 0.15);
+    ctx2d.lineTo(w, base); ctx2d.closePath();
+    const [r, g, b] = bandColorAt(0.5, 1); ctx2d.fillStyle = hueRgba(r, g, b, 0.35); ctx2d.fill();
+    ctx2d.strokeStyle = "rgba(255,255,255,0.8)"; ctx2d.lineWidth = 1.5 * dpr; ctx2d.stroke();
+  }
+
+  // 6) Skratch Bastid (Serato DJ iOS landscape tribute)
+  const sbSpin = [mkSpin(), mkSpin()]; const sbPad = new Float32Array(16);
+  const SB_PADS = ["255,40,60", "255,140,0", "255,220,0", "40,230,90", "0,220,255", "40,90,255", "170,60,255", "255,60,190"];
+  let sbSeen = [0, 0], sbScrSeen = 0;
+  function drawSkratchBastidMode(w, h, now) {
+    skBg(1);
+    const land = skLand(w, h);
+    for (let d = 0; d < 2; d++) if (decks[d].lastT !== sbSeen[d]) { sbSeen[d] = decks[d].lastT; sbPad[d * 8 + ((decks[d].count || 1) - 1)] = 1; }
+    if (SK.scratchT !== sbScrSeen && SK.scratchT) { sbScrSeen = SK.scratchT; sbPad[((Math.random() * 2) | 0) * 8 + 4 + ((Math.random() * 4) | 0)] = 1; }
+    for (let i = 0; i < 16; i++) sbPad[i] *= 0.9;
+    const top = h * 0.04, platH = land ? h * 0.42 : h * 0.3;
+    const r = Math.min(platH * 0.46, w * (land ? 0.16 : 0.22));
+    for (let d = 0; d < 2; d++) {
+      const cx = w * (d ? 0.75 : 0.25), cy = top + platH / 2, a = skSpin(sbSpin[d], now, d ? 0.6 : 1.4);
+      skPlatterBody(cx, cy, r * 0.78, a, decks[d].flash);
+      skRingWave(cx, cy, r, r * 0.28, a, 80); skPlayhead(cx, cy, r);
+      const b = deckBpm(decks[d], now) || (bpmConfident ? bpmDisplay : 0);
+      ctx2d.textAlign = "center"; ctx2d.fillStyle = "#fff";
+      ctx2d.font = `800 ${Math.round(r * 0.28)}px -apple-system, sans-serif`; ctx2d.fillText(b ? b.toFixed(1) : "--.-", cx, cy + r * 0.1);
+      ctx2d.font = `700 ${Math.round(Math.max(9 * dpr, r * 0.1))}px -apple-system, sans-serif`;
+      ctx2d.fillStyle = d ? rgbaOf(CYAN, 0.9) : rgbaOf(ORANGE, 0.9);
+      ctx2d.fillText("DECK " + (d + 1), cx + (d ? 1 : -1) * r * 1.55, cy - r * 0.8);
+    }
+    // middle scrolling waveform w/ beat grid
+    const wy = top + platH + h * 0.02, wh = land ? h * 0.2 : h * 0.22;
+    ctx2d.fillStyle = "#08090c"; ctx2d.fillRect(0, wy, w, wh);
+    const colPx = 2 * dpr;
+    skWave(0, wy, w * 0.5, wh / 2, colPx, 0.95); // past to center
+    ctx2d.save(); ctx2d.translate(w, 0); ctx2d.scale(-1, 1); skWave(0, wy + wh / 2, w * 0.5, wh / 2, colPx, 0.6); ctx2d.restore();
+    sxBeatGrid(now, colPx, w * 0.5, (off, down) => { ctx2d.fillStyle = down ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.35)"; ctx2d.fillRect(w * 0.5 - off, wy, down ? 2 * dpr : dpr, wh / 2); ctx2d.fillRect(w * 0.5 + off, wy + wh / 2, down ? 2 * dpr : dpr, wh / 2); });
+    ctx2d.fillStyle = "#fff"; ctx2d.fillRect(w * 0.5 - dpr, wy, 2 * dpr, wh);
+    // pads 2x4 per deck
+    const py = wy + wh + h * 0.03, pAreaH = h - py - h * 0.04, gap = 6 * dpr;
+    const halfW = w * 0.46, ph = (pAreaH - gap) / 2, pw = (halfW - gap * 3) / 4;
+    for (let d = 0; d < 2; d++) {
+      const x0 = d ? w - w * 0.02 - halfW : w * 0.02;
+      for (let i = 0; i < 8; i++) {
+        const v = sbPad[d * 8 + i], col = SB_PADS[i], x = x0 + (i % 4) * (pw + gap), y = py + Math.floor(i / 4) * (ph + gap);
+        ctx2d.fillStyle = `rgba(${col},${0.15 + v * 0.85})`;
+        roundRectPath(x, y, pw, ph, 6 * dpr); ctx2d.fill();
+        if (v > 0.3) { ctx2d.strokeStyle = `rgba(255,255,255,${v * 0.8})`; ctx2d.lineWidth = 2 * dpr; ctx2d.stroke(); }
+      }
+    }
+    // kaleidoscope flash on big drops
+    if (SK.drop > 0.1) {
+      ctx2d.save(); ctx2d.globalAlpha = SK.drop * 0.5; ctx2d.globalCompositeOperation = "lighter";
+      const sn = skSnap(w, h, now);
+      ctx2d.translate(w, 0); ctx2d.scale(-1, 1); ctx2d.drawImage(sn, 0, 0, w, h);
+      ctx2d.setTransform(1, 0, 0, -1, 0, h); ctx2d.drawImage(sn, 0, 0, w, h);
+      ctx2d.restore();
+    }
+    // VHS flicker on scratches
+    if (SK.scratch > 0.3) { skTears(w, h, SK.scratch, 4); skScanlines(w, h, SK.scratch * 0.6); if (SK.scratch > 0.6) skStatic(w, h, SK.scratch * 0.5); }
+  }
+  const SK_MODES = { scratchglitch: drawScratchGlitchMode, scratchplatter: drawScratchPlatterMode, vhs: drawVhsMode,
+    split: drawSplitMode, lighttrails: drawLightTrailsMode, skratchbastid: drawSkratchBastidMode };
+
   function drawFrame() {
     if (!running || !analyser) return;
 
@@ -3201,7 +3650,12 @@
     // Lighto 2.0: route the canvas visual through the active mode.
     // Analysis (kick/bass/energy/beat/meters) above stays identical.
     const vm = currentMode();
-    if (vm === "orbit") {
+    if (SK_MODES[vm]) {
+      energyLive = energy > 0.025;
+      sampleAndPushWave(kick, bass, energy, sens, now);
+      skAnalyze(now, kick, energy, sens);
+      SK_MODES[vm](w, h, now);
+    } else if (vm === "orbit") {
       drawOrbitMode(w, h, now, kick, bass, energy);
     } else if (vm === "scope") {
       drawScopeMode(w, h, now, kick, energy);
@@ -3549,6 +4003,29 @@
     });
   }
 
+  buildModeMenu();
+  if (els.modesBtn) {
+    els.modesBtn.addEventListener("click", (e) => { e.stopPropagation(); setModeMenu(!modeMenuOpen); });
+  }
+  document.addEventListener("click", (e) => {
+    if (modeMenuOpen && !e.target.closest("#modeMenu") && !e.target.closest("#modesBtn")) setModeMenu(false);
+  }, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") setModeMenu(false); });
+  // Swipe left/right on the canvas: next/prev mode
+  let swX = 0, swY = 0, swT = 0, swUsed = false;
+  els.display.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) { swT = 0; return; }
+    swX = e.touches[0].clientX; swY = e.touches[0].clientY; swT = Date.now();
+  }, { passive: true });
+  els.display.addEventListener("touchend", (e) => {
+    if (!swT || modeMenuOpen) return;
+    const t = e.changedTouches[0], dx = t.clientX - swX, dy = t.clientY - swY;
+    if (Date.now() - swT < 700 && Math.abs(dx) > 50 && Math.abs(dy) < Math.abs(dx) * 0.6) {
+      swUsed = true; setTimeout(() => (swUsed = false), 400);
+      cycleMode(dx < 0 ? 1 : -1);
+    }
+    swT = 0;
+  }, { passive: true });
   document.addEventListener("click", (e) => {
     if (!themeSheetOpen) return;
     if (e.target.closest("#themeSheet") || e.target.closest("#colorsBtn")) return;
@@ -3556,7 +4033,8 @@
   });
 
   els.display.addEventListener("click", (e) => {
-    if (!running) return;
+    if (!running || swUsed) return;
+    if (e.target.closest("#modeMenu")) return;
     if (e.target.closest(".tap-btn") || e.target.closest(".overlay") || e.target.closest(".denied")) return;
     if (partyMode) revealChrome();
     else schedulePartyHide();
@@ -3584,7 +4062,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=23", { updateViaCache: "none" }).catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=24", { updateViaCache: "none" }).catch(() => {});
     });
   }
 

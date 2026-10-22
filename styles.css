@@ -1172,3 +1172,19 @@ html, body {
   .wave-val { display: none; }
   .wave-ctl { flex: 1 1 30%; min-width: 0; gap: 4px; font-size: 0.6rem; letter-spacing: 0.08em; }
 }
+
+/* v24: mode menu */
+.mode-menu[hidden] { display: none !important; }
+.mode-menu {
+  position: absolute; z-index: 40; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(92%, 520px); max-height: 78%; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; padding: 12px;
+  background: rgba(8, 10, 14, 0.94); border: 1px solid rgba(var(--cyan-rgb), 0.4); border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.mode-item {
+  min-height: 44px; padding: 8px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05); color: #dfe6ee; font: 700 0.85rem -apple-system, sans-serif; cursor: pointer;
+}
+.mode-item.active { border-color: var(--cyan); color: #000; background: var(--cyan); box-shadow: 0 0 14px rgba(var(--cyan-rgb), 0.5); }
+.mode-toast { z-index: 41; }
