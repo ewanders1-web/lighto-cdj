@@ -249,6 +249,10 @@
     { id: "split", name: "Split Screen" },
     { id: "lighttrails", name: "Light Trails" },
     { id: "skratchbastid", name: "Skratch Bastid" },
+    { id: "blackhole", name: "Black Hole" },
+    { id: "warp", name: "Warp" },
+    { id: "hyperspace", name: "Hyperspace" },
+    { id: "pulsar", name: "Pulsar" },
   ];
   let modeIndex = 0;
   let modeToastTimer = 0;
@@ -3570,6 +3574,384 @@
     // VHS flicker on scratches
     if (SK.scratch > 0.3) { skTears(w, h, SK.scratch, 4); skScanlines(w, h, SK.scratch * 0.6); if (SK.scratch > 0.6) skStatic(w, h, SK.scratch * 0.5); }
   }
+  // ---- v26: Space modes (Sonar v2, Black Hole, Warp, Hyperspace, Pulsar) ----
+  const SPC = { act: 0, spin: 0, shock: 0, seenP: 0, seenB: 0, seenK: 0, hatT: 0, jump: 0, jumpT: 0, flash: 0,
+    bh: [], sparks: [], stars: [], hrings: [], hlines: [], ps: [], sonR: [], sonB: [], sweep: 0, w: 0, h: 0, hueRot: 0, pAng: 0 };
+  const TAU = Math.PI * 2;
+  function spCap(w, h, per, lo, hi) { return Math.max(lo, Math.min(hi, Math.round((w * h) / (dpr * dpr) / per))); }
+  function spCol(c, a) { return hueRgba(c[0], c[1], c[2], a); }
+  function spMix(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; }
+  const SP_WHITE = [255, 255, 255];
+  function spBpm(now) { const b = deckBpm(decks[0], now) || (bpmConfident && bpmDisplay > 0 ? bpmDisplay : 0); return b > 40 && b < 200 ? b : 90; }
+  // shared per-frame analysis: returns events this frame (no events on silence)
+  function spAnalyze(now, kick, bass, energy, sens) {
+    sampleAndPushWave(kick, bass, energy, sens, now);
+    skAnalyze(now, kick, energy, sens);
+    const live = energy > 0.025;
+    SPC.act += ((live ? Math.min(1, energy * 3 + 0.25) : 0) - SPC.act) * 0.05;
+    const ev = { beat: null, boom: null, down: false, hat: false, kickEv: false, live };
+    const p = newestSince(pulses, SPC.seenP);
+    if (p) { SPC.seenP = p.t0; if (live) { ev.beat = p; if (beatCount === 1) ev.down = true; } }
+    const b = newestSince(booms, SPC.seenB);
+    if (b) { SPC.seenB = b.t0; if (live) { ev.boom = b; ev.kickEv = true; } }
+    if (SK.kickEv && SK.kickEv !== SPC.seenK) { SPC.seenK = SK.kickEv; if (live) { ev.kickEv = true; if (decks[0].down) ev.down = true; } }
+    const hiE = SK.hiE || 0;
+    if (live && now - SPC.hatT > 110 && hiE > 0.06 && hiE > SK.hiSlow * 1.3 && hiE - SK.hiSlow > 0.02) { SPC.hatT = now; ev.hat = true; }
+    const bpm = spBpm(now);
+    SPC.spin = (bpm / 90) * (0.15 + SPC.act * 0.85);
+    SPC.shock *= 0.9; SPC.flash *= 0.88;
+    const mid = SK.midE || 0;
+    SPC.hueRot = SPC.hueRot * 0.97 + (hiE - SK.kickSlow) * 0.03;
+    return Object.assign(ev, { bpm, mid, hi: hiE, kick, bass, energy, kf: SK.kickFlash, scr: SK.scratch, I: 0.75 + userScale * 0.25 });
+  }
+  function spFeedback(w, h, zoom, alpha, rot) {
+    ctx2d.save();
+    ctx2d.globalAlpha = alpha;
+    ctx2d.translate(w / 2, h / 2); if (rot) ctx2d.rotate(rot); ctx2d.scale(zoom, zoom); ctx2d.translate(-w / 2, -h / 2);
+    ctx2d.drawImage(els.canvas, 0, 0, w, h);
+    ctx2d.restore();
+  }
+  function spGlow(x, y, r, c, a) {
+    const g = ctx2d.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, spCol(c, a)); g.addColorStop(1, spCol(c, 0));
+    ctx2d.fillStyle = g; ctx2d.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+
+  // ===== Sonar v2 =====
+  function drawSonarModeV2(w, h, now, kick, bass, energy, sens) {
+    const E = spAnalyze(now, kick, bass, energy, sens);
+    const cx = w * 0.5, cy = h * (w > h ? 0.5 : 0.46), minDim = Math.min(w, h);
+    const S = 0.8 + userScale * 0.2;
+    const maxR = Math.hypot(Math.max(cx, w - cx), Math.max(cy, h - cy)) * 0.95 * S;
+    const gridR = minDim * 0.47 * Math.min(1.08, S);
+    // depth: zooming feedback + downbeat warp
+    spFeedback(w, h, 1.01 + SPC.shock * 0.05, 0.12 + SPC.act * 0.08, SPC.shock * 0.02);
+    const sp = currentTheme.spectral;
+    const push = (o) => { SPC.sonR.push(o); while (SPC.sonR.length > 18) SPC.sonR.shift(); };
+    if (E.kickEv || (E.beat && E.beat.strength > 0.6)) push({ t0: now, life: 2600, w: 7, col: sp.bass, str: E.boom ? 1 : 0.8, snap: spectrumSnap(0, 1) });
+    else if (E.beat) push({ t0: now, life: 2300, w: 4, col: E.mid > E.hi ? sp.mid : sp.high, str: 0.6, snap: spectrumSnap(0, 1) });
+    if (E.hat) push({ t0: now, life: 1100, w: 1.3, col: sp.high, str: 0.5, snap: null });
+    if (E.down) { SPC.shock = 1; push({ t0: now, life: 1800, w: 22, col: BOOM || sp.bass, str: 1, deep: true, snap: null }); }
+    // well
+    const well = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, maxR);
+    well.addColorStop(0, spCol(CYAN, 0.06 + E.kf * 0.1)); well.addColorStop(0.6, "rgba(3,8,12,0.3)"); well.addColorStop(1, "rgba(0,0,0,0.5)");
+    ctx2d.fillStyle = well; ctx2d.fillRect(0, 0, w, h);
+    // radar grid with degree ticks
+    ctx2d.save();
+    ctx2d.strokeStyle = spCol(CYAN, 0.13); ctx2d.lineWidth = dpr;
+    for (let i = 1; i <= 4; i++) { ctx2d.beginPath(); ctx2d.arc(cx, cy, (gridR * i) / 4, 0, TAU); ctx2d.stroke(); }
+    ctx2d.beginPath();
+    for (let i = 0; i < 12; i++) { const a = (i / 12) * TAU; ctx2d.moveTo(cx + Math.cos(a) * gridR * 0.08, cy + Math.sin(a) * gridR * 0.08); ctx2d.lineTo(cx + Math.cos(a) * gridR, cy + Math.sin(a) * gridR); }
+    ctx2d.strokeStyle = spCol(CYAN, 0.06); ctx2d.stroke();
+    ctx2d.beginPath();
+    for (let i = 0; i < 72; i++) { const a = (i / 72) * TAU, t0 = i % 9 === 0 ? 0.93 : i % 3 === 0 ? 0.955 : 0.975; ctx2d.moveTo(cx + Math.cos(a) * gridR * t0, cy + Math.sin(a) * gridR * t0); ctx2d.lineTo(cx + Math.cos(a) * gridR, cy + Math.sin(a) * gridR); }
+    ctx2d.strokeStyle = spCol(CYAN, 0.28); ctx2d.stroke();
+    ctx2d.fillStyle = spCol(CYAN, 0.35); ctx2d.font = `${Math.round(9 * dpr)}px ui-monospace,monospace`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    for (let d = 0; d < 360; d += 30) { const a = (d / 180) * Math.PI - Math.PI / 2; ctx2d.fillText(String(d).padStart(3, "0"), cx + Math.cos(a) * gridR * 1.06, cy + Math.sin(a) * gridR * 1.06); }
+    ctx2d.restore();
+    // sweep with afterglow
+    SPC.sweep += (0.008 + E.energy * 0.012) * (0.5 + SPC.spin * 0.6) * (SK.dt / 16.7);
+    const sw = SPC.sweep;
+    ctx2d.save(); ctx2d.globalCompositeOperation = "lighter";
+    const wedge = 0.9, steps = 14;
+    for (let i = 0; i < steps; i++) {
+      const a1 = sw - (i / steps) * wedge, a0 = sw - ((i + 1) / steps) * wedge;
+      ctx2d.beginPath(); ctx2d.moveTo(cx, cy); ctx2d.arc(cx, cy, gridR, a0, a1); ctx2d.closePath();
+      ctx2d.fillStyle = spCol(CYAN, 0.12 * Math.pow(1 - i / steps, 2) * (0.6 + SPC.act * 0.6)); ctx2d.fill();
+    }
+    ctx2d.beginPath(); ctx2d.moveTo(cx, cy); ctx2d.lineTo(cx + Math.cos(sw) * gridR, cy + Math.sin(sw) * gridR);
+    ctx2d.strokeStyle = spCol(CYAN, 0.85); ctx2d.lineWidth = 2 * dpr; ctx2d.stroke();
+    // rings (ripple with mids)
+    const rip = E.mid * 0.06 * E.I;
+    for (let k = SPC.sonR.length - 1; k >= 0; k--) {
+      const R = SPC.sonR[k], age = (now - R.t0) / R.life;
+      if (age >= 1) { SPC.sonR.splice(k, 1); continue; }
+      const ease = 1 - Math.pow(1 - age, R.deep ? 2.2 : 1.6);
+      const r = ease * maxR * (R.deep ? 1.15 : 1), a = (1 - age) * (0.35 + R.str * 0.65);
+      const N = 96;
+      ctx2d.beginPath();
+      for (let i = 0; i <= N; i++) {
+        const t = (i % N) / N, ang = t * TAU;
+        let rr = r * (1 + Math.sin(ang * 6 + now * 0.004 + k) * rip + Math.sin(ang * 11 - now * 0.006) * rip * 0.5);
+        if (R.snap) { const si = Math.floor((t < 0.5 ? t * 2 : (1 - t) * 2) * (SNAP_N - 1)); rr += R.snap[si] * minDim * 0.03 * (1 - age); }
+        const x = cx + Math.cos(ang) * rr, y = cy + Math.sin(ang) * rr;
+        i ? ctx2d.lineTo(x, y) : ctx2d.moveTo(x, y);
+      }
+      ctx2d.strokeStyle = spCol(R.col, a * (R.deep ? 0.35 : 1)); ctx2d.lineWidth = Math.max(1, R.w * S * (1 - age * 0.6) * dpr); ctx2d.stroke();
+      if (R.w > 3) { ctx2d.strokeStyle = spCol(R.col, a * 0.1); ctx2d.lineWidth = R.w * 3 * S * dpr; ctx2d.stroke(); }
+      // contact: sweep crossing ring -> blip
+      if (!R.deep && r < gridR && (!R.lastB || now - R.lastB > 140)) {
+        R.lastB = now;
+        SPC.sonB.push({ t0: now, a: sw, r, col: R.col, size: (2 + R.w) * dpr });
+        if (SPC.sonB.length > 50) SPC.sonB.shift();
+      }
+    }
+    // ring-ring contacts (where neighbouring ripple rings intersect) on beats
+    if (E.beat && SPC.sonR.length > 1) for (let i = 0; i < 3; i++) SPC.sonB.push({ t0: now, a: Math.random() * TAU, r: gridR * (0.25 + Math.random() * 0.7), col: bandColorAt(Math.random(), 0.9), size: (3 + E.beat.strength * 4) * dpr });
+    for (let i = SPC.sonB.length - 1; i >= 0; i--) {
+      const bl = SPC.sonB[i], age = (now - bl.t0) / 2200;
+      if (age >= 1) { SPC.sonB.splice(i, 1); continue; }
+      let d = (sw - bl.a) % TAU; if (d < 0) d += TAU;
+      const lit = d < 0.25 ? 1 - d / 0.25 : 0;
+      const x = cx + Math.cos(bl.a) * bl.r, y = cy + Math.sin(bl.a) * bl.r;
+      spGlow(x, y, bl.size * (3 + lit * 2), bl.col, (1 - age) * (0.35 + lit * 0.65));
+    }
+    // downbeat bass glow
+    if (SPC.shock > 0.05) spGlow(cx, cy, maxR * 0.7, BOOM || CYAN, SPC.shock * 0.25);
+    // transducer
+    traceSpectralRing(cx, cy, minDim * 0.035, spectrumSnap(0, 1), minDim * 0.06, 1, 1, -Math.PI / 2);
+    ctx2d.fillStyle = spCol(ORANGE, 0.25 + E.energy * 0.4); ctx2d.fill();
+    ctx2d.beginPath(); ctx2d.arc(cx, cy, minDim * (0.012 + E.kf * 0.014), 0, TAU); ctx2d.fillStyle = `rgba(255,255,255,${0.6 + E.kf * 0.4})`; ctx2d.fill();
+    ctx2d.restore();
+  }
+
+  // ===== Black Hole =====
+  function bhSpawn(o, R, outer, fresh) {
+    o.r = R * (1.6 + Math.random() * (outer - 1.6)); o.a = Math.random() * TAU; o.z = (Math.random() - 0.5) * 0.08;
+    o.t = Math.random(); o.fall = 0; o.sz = 0.6 + Math.random() * 1.6; o.fresh = fresh;
+  }
+  function drawBlackHoleMode(w, h, now, kick, bass, energy, sens) {
+    const E = spAnalyze(now, kick, bass, energy, sens);
+    const dt = SK.dt / 16.7, cx = w / 2, cy = h * 0.5, minDim = Math.min(w, h);
+    const land = w > h, S = E.I;
+    const R0 = minDim * (land ? 0.1 : 0.095);
+    const R = R0 * (1 + E.bass * 0.18 * S + E.kf * 0.08);
+    const outer = (land ? 4.8 : 4.4) * Math.min(1.25, 0.85 + S * 0.15);
+    const tilt = land ? 0.2 : 0.3;
+    const N = spCap(w, h, 900, 160, 520);
+    const P = SPC.bh;
+    while (P.length < N) { const o = {}; bhSpawn(o, R0, outer, false); P.push(o); }
+    if (P.length > N) P.length = N;
+    ctx2d.fillStyle = "rgba(0,0,0,0.25)"; ctx2d.fillRect(0, 0, w, h);
+    spFeedback(w, h, 0.996, 0.25, 0.004 * SPC.spin);
+    if (E.kickEv) for (const o of P) o.r -= (o.r - R) * 0.08 * S;
+    const base = 0.035 * SPC.spin + 0.004;
+    const proj = (r, a, z) => [cx + Math.cos(a) * r, cy + Math.sin(a) * r * tilt + z * r];
+    const sp = currentTheme.spectral;
+    const drawHalf = (front) => {
+      ctx2d.globalCompositeOperation = "lighter";
+      ctx2d.lineCap = "round";
+      for (const o of P) {
+        const sa = Math.sin(o.a);
+        if ((sa > 0) !== front) continue;
+        const rn = o.r / R0;
+        const om = base * Math.pow(1.6 / Math.max(1, rn), 1.4);
+        const heat = Math.max(0, Math.min(1, 1.25 - rn / outer * 1.2));
+        const col = spMix(spMix(sp.bass, ORANGE, o.t), spMix(sp.high, SP_WHITE, 0.5), heat * heat);
+        const tail = om * (6 + E.energy * 10) * (1 + o.fall * 6);
+        const [x0, y0] = proj(o.r * (1 + o.fall * 0.15), o.a - tail, o.z);
+        const [x1, y1] = proj(o.r, o.a, o.z);
+        const dop = 0.55 + 0.45 * Math.cos(o.a); // brighter on approaching side
+        ctx2d.strokeStyle = spCol(col, Math.min(1, (0.25 + heat * 0.7) * dop * (1 - o.fall) * (0.5 + SPC.act * 0.5 + E.kf * 0.4)));
+        ctx2d.lineWidth = Math.max(0.6, o.sz * dpr * (1 + heat) * (1 - o.fall * 0.7));
+        ctx2d.beginPath(); ctx2d.moveTo(x0, y0); ctx2d.lineTo(x1, y1); ctx2d.stroke();
+      }
+    };
+    // update
+    for (const o of P) {
+      const rn = o.r / R0;
+      o.a += base * Math.pow(1.6 / Math.max(1, rn), 1.4) * dt;
+      o.r -= (0.0008 + SPC.act * 0.0025) * R0 * dt * (2.5 / Math.max(0.6, rn));
+      if (o.r < R * 1.35) o.fall = Math.min(1, o.fall + 0.05 * dt);
+      if (o.fall >= 1 || o.r < R * 0.9) bhSpawn(o, R0, outer, true);
+    }
+    ctx2d.save();
+    // back disc
+    drawHalf(false);
+    // lensed band arcing over the top
+    ctx2d.globalCompositeOperation = "lighter";
+    for (let i = 0; i < 3; i++) {
+      ctx2d.beginPath();
+      ctx2d.ellipse(cx, cy, R * (1.35 + i * 0.25), R * (1.2 + i * 0.2), 0, Math.PI, TAU);
+      ctx2d.strokeStyle = spCol(spMix(ORANGE, SP_WHITE, 0.3 - i * 0.1), (0.35 - i * 0.1) * (0.5 + SPC.act * 0.5 + E.kf * 0.4));
+      ctx2d.lineWidth = R * (0.16 - i * 0.04) * (1 + E.mid * 0.6); ctx2d.stroke();
+      ctx2d.beginPath();
+      ctx2d.ellipse(cx, cy, R * (1.3 + i * 0.2), R * (1.08 + i * 0.12), 0, 0, Math.PI);
+      ctx2d.strokeStyle = spCol(ORANGE, (0.18 - i * 0.05) * (0.5 + SPC.act * 0.5)); ctx2d.lineWidth = R * 0.06; ctx2d.stroke();
+    }
+    // horizon
+    ctx2d.globalCompositeOperation = "source-over";
+    const hz = ctx2d.createRadialGradient(cx, cy, R * 0.6, cx, cy, R * 1.25);
+    hz.addColorStop(0, "rgba(0,0,0,1)"); hz.addColorStop(0.8, "rgba(0,0,0,1)"); hz.addColorStop(1, "rgba(0,0,0,0)");
+    ctx2d.fillStyle = hz; ctx2d.beginPath(); ctx2d.arc(cx, cy, R * 1.25, 0, TAU); ctx2d.fill();
+    // photon ring
+    ctx2d.globalCompositeOperation = "lighter";
+    ctx2d.beginPath(); ctx2d.arc(cx, cy, R * 1.02, 0, TAU);
+    ctx2d.strokeStyle = spCol(spMix(ORANGE, SP_WHITE, 0.6), 0.55 + E.kf * 0.45); ctx2d.lineWidth = Math.max(1.2 * dpr, R * (0.025 + E.kf * 0.05)); ctx2d.stroke();
+    ctx2d.strokeStyle = spCol(ORANGE, 0.15 + E.kf * 0.3); ctx2d.lineWidth = R * (0.1 + E.kf * 0.2); ctx2d.stroke();
+    // front disc
+    drawHalf(true);
+    // jets + sparks from highs
+    const jetA = 0.08 + E.hi * 0.4 + SPC.act * 0.05;
+    for (const s of [-1, 1]) {
+      const g = ctx2d.createLinearGradient(cx, cy, cx, cy + s * minDim * 0.6);
+      g.addColorStop(0, spCol(spMix(CYAN, SP_WHITE, 0.4), jetA)); g.addColorStop(1, spCol(CYAN, 0));
+      ctx2d.fillStyle = g; ctx2d.beginPath(); ctx2d.moveTo(cx - R * 0.08, cy); ctx2d.lineTo(cx - R * 0.35, cy + s * minDim * 0.6); ctx2d.lineTo(cx + R * 0.35, cy + s * minDim * 0.6); ctx2d.lineTo(cx + R * 0.08, cy); ctx2d.fill();
+    }
+    const SPK = SPC.sparks, nsp = E.live ? Math.round(E.hi * 8 * S + (E.hat ? 10 : 0) + E.scr * 10) : 0;
+    for (let i = 0; i < nsp && SPK.length < 220; i++) { const s = Math.random() < 0.5 ? -1 : 1; SPK.push({ x: cx + (Math.random() - 0.5) * R * 0.2, y: cy + s * R * 0.9, vx: (Math.random() - 0.5) * 3 * dpr, vy: s * (4 + Math.random() * 8) * dpr, l: 1, c: Math.random() < 0.5 ? CYAN : SP_WHITE }); }
+    for (let i = SPK.length - 1; i >= 0; i--) {
+      const k = SPK[i]; k.x += k.vx * dt; k.y += k.vy * dt; k.l -= 0.025 * dt;
+      if (k.l <= 0) { SPK.splice(i, 1); continue; }
+      ctx2d.strokeStyle = spCol(k.c, k.l); ctx2d.lineWidth = 1.4 * dpr; ctx2d.beginPath(); ctx2d.moveTo(k.x, k.y); ctx2d.lineTo(k.x - k.vx * 2, k.y - k.vy * 2); ctx2d.stroke();
+    }
+    ctx2d.restore();
+  }
+
+  // ===== Warp =====
+  function drawWarpMode(w, h, now, kick, bass, energy, sens) {
+    const E = spAnalyze(now, kick, bass, energy, sens);
+    const dt = SK.dt / 16.7, cx = w / 2, cy = h / 2, F = Math.max(w, h) * 0.5;
+    const N = spCap(w, h, 700, 200, 650), st = SPC.stars;
+    const spawn = (o, far) => { o.x = (Math.random() - 0.5) * 2; o.y = (Math.random() - 0.5) * 2; o.z = far ? 1 : 0.05 + Math.random(); o.pz = o.z; o.t = Math.random(); };
+    while (st.length < N) { const o = {}; spawn(o, false); st.push(o); }
+    if (st.length > N) st.length = N;
+    if (SK.drop > 0.95 && now - SPC.jumpT > 3000) { SPC.jumpT = now; SPC.flash = 1; }
+    const jt = (now - SPC.jumpT) / 900, jump = jt < 1 ? Math.sin(jt * Math.PI) : 0;
+    let spd = 0.002 + SPC.act * 0.006 * (E.bpm / 90) + E.energy * 0.012 * E.I + E.kf * 0.018 * E.I + jump * 0.06;
+    ctx2d.fillStyle = `rgba(0,0,0,${0.35 - Math.min(0.25, spd * 4)})`; ctx2d.fillRect(0, 0, w, h);
+    ctx2d.save(); ctx2d.globalCompositeOperation = "lighter"; ctx2d.lineCap = "round";
+    spGlow(cx, cy, F * (0.35 + E.kf * 0.15 + jump * 0.4), [120, 170, 255], 0.15 + E.energy * 0.25 + jump * 0.3);
+    spGlow(cx, cy, F * 0.08, SP_WHITE, 0.3 + E.kf * 0.4);
+    const stretch = 1 + spd * 60 + jump * 4;
+    for (const o of st) {
+      o.pz = o.z; o.z -= spd * dt * (0.6 + o.t * 0.8);
+      if (o.z <= 0.01) { spawn(o, true); continue; }
+      const x1 = cx + (o.x / o.z) * F, y1 = cy + (o.y / o.z) * F;
+      if (x1 < -20 || x1 > w + 20 || y1 < -20 || y1 > h + 20) { spawn(o, true); continue; }
+      const zt = Math.min(1, o.z + (o.pz - o.z) * stretch);
+      const x0 = cx + (o.x / zt) * F, y0 = cy + (o.y / zt) * F;
+      const near = 1 - o.z;
+      const col = spMix(o.t < 0.5 ? CYAN : ORANGE, SP_WHITE, 0.35 + near * 0.4);
+      ctx2d.strokeStyle = spCol(col, Math.min(1, near * 1.2));
+      ctx2d.lineWidth = Math.max(0.7, near * 2.6 * dpr);
+      ctx2d.beginPath(); ctx2d.moveTo(x0, y0); ctx2d.lineTo(x1 + 0.1, y1); ctx2d.stroke();
+    }
+    ctx2d.restore();
+    if (SPC.flash > 0.03) { ctx2d.fillStyle = `rgba(255,255,255,${SPC.flash * 0.85})`; ctx2d.fillRect(0, 0, w, h); }
+  }
+
+  // ===== Hyperspace =====
+  function drawHyperspaceMode(w, h, now, kick, bass, energy, sens) {
+    const E = spAnalyze(now, kick, bass, energy, sens);
+    const dt = SK.dt / 16.7, minDim = Math.min(w, h), F = Math.max(w, h) * 0.55;
+    const wob = E.scr * minDim * 0.08;
+    const cx = w / 2 + Math.sin(now * 0.03) * wob + Math.sin(now * 0.0005) * minDim * 0.03;
+    const cy = h / 2 + Math.cos(now * 0.037) * wob + Math.cos(now * 0.0004) * minDim * 0.03;
+    const spd = 0.004 + SPC.act * 0.008 * (E.bpm / 90) + E.energy * 0.01 * E.I + E.kf * 0.012;
+    ctx2d.fillStyle = "rgba(0,2,10,0.45)"; ctx2d.fillRect(0, 0, w, h);
+    const col = spectralColor(E.bass + 0.2, E.mid + 0.1, E.hi, 0.9);
+    const twist = SPC.spin * 0.6 + E.mid * 1.2;
+    SPC.pAng += (0.004 + SPC.spin * 0.01) * dt;
+    // rings spawn on beats (+ idle slow ones)
+    const R = SPC.hrings;
+    if (E.beat || E.kickEv) R.push({ z: 1, s: E.kickEv ? 1 : 0.6, c: col.slice() });
+    if (!R.length || R[R.length - 1].z < 0.75) R.push({ z: 1, s: 0.25, c: col.slice() });
+    while (R.length > 24) R.shift();
+    ctx2d.save(); ctx2d.globalCompositeOperation = "lighter"; ctx2d.lineCap = "round";
+    const sides = 10, pts = [];
+    for (let k = R.length - 1; k >= 0; k--) { const r = R[k]; r.z -= spd * 1.4 * dt; if (r.z <= 0.03) R.splice(k, 1); }
+    for (const r of R) {
+      const rad = (minDim * 0.42) / r.z, rot = SPC.pAng + r.z * twist * 3;
+      const arr = [];
+      for (let i = 0; i < sides; i++) { const a = rot + (i / sides) * TAU; arr.push([cx + Math.cos(a) * rad, cy + Math.sin(a) * rad]); }
+      pts.push(arr);
+      const a = Math.min(1, (1 - r.z) * 1.4) * (0.3 + r.s * 0.7);
+      ctx2d.beginPath(); arr.forEach((p, i) => (i ? ctx2d.lineTo(p[0], p[1]) : ctx2d.moveTo(p[0], p[1]))); ctx2d.closePath();
+      ctx2d.strokeStyle = spCol(r.c, a); ctx2d.lineWidth = Math.max(1, (1 + r.s * 3) * dpr / Math.max(0.3, r.z) * 0.4); ctx2d.stroke();
+    }
+    // longitudinal grid lines
+    ctx2d.strokeStyle = spCol(col, 0.18); ctx2d.lineWidth = dpr;
+    for (let i = 0; i < sides; i++) { ctx2d.beginPath(); pts.forEach((arr, j) => (j ? ctx2d.lineTo(arr[i][0], arr[i][1]) : ctx2d.moveTo(arr[i][0], arr[i][1]))); ctx2d.stroke(); }
+    // long light lines rushing past
+    const L = SPC.hlines, N = spCap(w, h, 1400, 90, 300);
+    while (L.length < N) L.push({ a: Math.random() * TAU, z: Math.random(), len: 0.3 + Math.random() * 0.5, t: Math.random() });
+    if (L.length > N) L.length = N;
+    for (const l of L) {
+      l.z -= spd * 2.2 * dt;
+      if (l.z <= 0.02) { l.z = 1; l.a = Math.random() * TAU; l.t = Math.random(); }
+      const z0 = Math.min(1.2, l.z + l.len * (0.4 + spd * 40)), r0 = (minDim * 0.08) / z0, r1 = (minDim * 0.08) / l.z;
+      const a = l.a + SPC.pAng * 0.3;
+      const c = spMix(spMix([170, 200, 255], col, 0.4), SP_WHITE, l.t * 0.6);
+      ctx2d.strokeStyle = spCol(c, Math.min(0.8, (1 - l.z) * 0.9)); ctx2d.lineWidth = Math.max(0.8, (1 - l.z) * 2.2 * dpr);
+      ctx2d.beginPath(); ctx2d.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); ctx2d.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); ctx2d.stroke();
+    }
+    spGlow(cx, cy, minDim * (0.12 + E.kf * 0.08), spMix(col, SP_WHITE, 0.6), 0.35 + E.energy * 0.3);
+    ctx2d.restore();
+    // scratch glitch slices
+    if (E.scr > 0.35) {
+      const n = 2 + Math.round(E.scr * 5);
+      for (let i = 0; i < n; i++) { const y = Math.random() * h, hh = Math.max(4, Math.random() * h * 0.05), dx = (Math.random() - 0.5) * minDim * 0.12 * E.scr; ctx2d.drawImage(els.canvas, 0, y, w, hh, dx, y, w, hh); }
+    }
+  }
+
+  // ===== Pulsar (original) =====
+  function drawPulsarMode(w, h, now, kick, bass, energy, sens) {
+    const E = spAnalyze(now, kick, bass, energy, sens);
+    const dt = SK.dt / 16.7, cx = w / 2, cy = h / 2, minDim = Math.min(w, h), S = E.I;
+    const core = minDim * 0.045 * (1 + E.kf * 0.5 * S + E.bass * 0.15);
+    spFeedback(w, h, 1.008, 0.2 + SPC.act * 0.1, 0);
+    ctx2d.fillStyle = "rgba(0,0,6,0.3)"; ctx2d.fillRect(0, 0, w, h);
+    // rotation: BPM-locked (2 beams per beat), scratches stutter/reverse
+    const dir = E.scr > 0.4 ? SK.dir : 1;
+    SPC.pAng += dir * (TAU / 2) * (SPC.spin * (E.bpm / 60000) * SK.dt * 0.5 + 0.0015 * dt) * (E.scr > 0.6 ? 2.5 : 1);
+    const ang = SPC.pAng + (E.scr > 0.5 ? (Math.random() - 0.5) * 0.3 : 0);
+    const tilt = 0.35;
+    ctx2d.save(); ctx2d.globalCompositeOperation = "lighter";
+    // spectrum halo (galaxy of bars around the star)
+    const snap = spectrumSnap(0, 1), bars = 96, hr = minDim * 0.16;
+    for (let i = 0; i < bars; i++) {
+      const t = i / bars, si = Math.floor((t < 0.5 ? t * 2 : (1 - t) * 2) * (SNAP_N - 1)), v = snap[si];
+      const a = t * TAU - ang * 0.15, l = minDim * (0.02 + v * 0.22 * S);
+      const c = bandColorAt(si / SNAP_N, 0.8);
+      ctx2d.strokeStyle = spCol(c, 0.25 + v * 0.7); ctx2d.lineWidth = Math.max(1, (TAU * hr / bars) * 0.55);
+      ctx2d.beginPath(); ctx2d.moveTo(cx + Math.cos(a) * hr, cy + Math.sin(a) * hr); ctx2d.lineTo(cx + Math.cos(a) * (hr + l), cy + Math.sin(a) * (hr + l)); ctx2d.stroke();
+    }
+    // magnetic field loops wobble with mids
+    for (let k = 0; k < 6; k++) {
+      const s = 0.06 + k * 0.035, wob = 1 + Math.sin(now * 0.003 + k) * E.mid * 0.25 * S;
+      ctx2d.beginPath();
+      ctx2d.ellipse(cx, cy, minDim * s * 1.6 * wob, minDim * s * wob * 0.7, ang * 0.5 + Math.PI / 2, 0, TAU);
+      ctx2d.strokeStyle = spCol(CYAN, 0.06 + E.mid * 0.25); ctx2d.lineWidth = dpr * 1.2; ctx2d.stroke();
+    }
+    // twin lighthouse beams (width from mids, brightness from kick)
+    const BL = Math.hypot(w, h);
+    for (const s of [0, Math.PI]) {
+      const a = ang + s, wd = 0.05 + E.mid * 0.12 * S + E.kf * 0.05;
+      const g = ctx2d.createRadialGradient(cx, cy, core, cx, cy, BL * 0.6);
+      const bc = s ? ORANGE : CYAN;
+      g.addColorStop(0, spCol(spMix(bc, SP_WHITE, 0.6), 0.4 + E.kf * 0.5 + SPC.act * 0.1)); g.addColorStop(0.35, spCol(bc, 0.15 + E.kf * 0.2)); g.addColorStop(1, spCol(bc, 0));
+      ctx2d.fillStyle = g;
+      ctx2d.beginPath(); ctx2d.moveTo(cx, cy);
+      const p = (aa) => [cx + Math.cos(aa) * BL, cy + Math.sin(aa) * BL * (1 - tilt * 0.4)];
+      const [x0, y0] = p(a - wd), [x1, y1] = p(a + wd);
+      ctx2d.lineTo(x0, y0); ctx2d.lineTo(x1, y1); ctx2d.closePath(); ctx2d.fill();
+    }
+    // kick shock rings + highs sparkle crown
+    const P = SPC.ps;
+    if (E.kickEv) P.push({ k: "ring", t0: now, s: E.boom ? 1 : 0.7 });
+    const nsp = E.live ? Math.round(E.hi * 6 * S + (E.hat ? 6 : 0) + E.scr * 8) : 0;
+    for (let i = 0; i < nsp && P.length < 260; i++) { const a = Math.random() * TAU, v = (2 + Math.random() * 6) * dpr; P.push({ k: "sp", x: cx + Math.cos(a) * core, y: cy + Math.sin(a) * core, vx: Math.cos(a) * v, vy: Math.sin(a) * v, l: 1, c: E.scr > 0.4 ? ORANGE : SP_WHITE }); }
+    for (let i = P.length - 1; i >= 0; i--) {
+      const q = P[i];
+      if (q.k === "ring") {
+        const age = (now - q.t0) / 1400; if (age >= 1) { P.splice(i, 1); continue; }
+        ctx2d.beginPath(); ctx2d.arc(cx, cy, core + age * minDim * 0.6, 0, TAU);
+        ctx2d.strokeStyle = spCol(spMix(BOOM || CYAN, SP_WHITE, 0.3), (1 - age) * 0.6 * q.s); ctx2d.lineWidth = (1 - age) * 8 * dpr * q.s; ctx2d.stroke();
+      } else {
+        q.x += q.vx * dt; q.y += q.vy * dt; q.l -= 0.03 * dt; if (q.l <= 0) { P.splice(i, 1); continue; }
+        ctx2d.strokeStyle = spCol(q.c, q.l); ctx2d.lineWidth = 1.3 * dpr; ctx2d.beginPath(); ctx2d.moveTo(q.x, q.y); ctx2d.lineTo(q.x - q.vx * 2, q.y - q.vy * 2); ctx2d.stroke();
+      }
+    }
+    // neutron star
+    spGlow(cx, cy, core * (4 + E.kf * 4), spMix(CYAN, SP_WHITE, 0.5), 0.35 + E.kf * 0.5);
+    ctx2d.globalCompositeOperation = "source-over";
+    ctx2d.beginPath(); ctx2d.arc(cx, cy, core, 0, TAU); ctx2d.fillStyle = `rgba(255,255,255,${0.85 + E.kf * 0.15})`; ctx2d.fill();
+    ctx2d.restore();
+    if (E.scr > 0.5) skTears(w, h, E.scr * 0.6, 3);
+  }
+  const SPACE_MODES = { sonar: drawSonarModeV2, blackhole: drawBlackHoleMode, warp: drawWarpMode, hyperspace: drawHyperspaceMode, pulsar: drawPulsarMode };
+
   const SK_MODES = { scratchglitch: drawScratchGlitchMode, scratchplatter: drawScratchPlatterMode, vhs: drawVhsMode,
     split: drawSplitMode, lighttrails: drawLightTrailsMode, skratchbastid: drawSkratchBastidMode };
 
@@ -3650,7 +4032,10 @@
     // Lighto 2.0: route the canvas visual through the active mode.
     // Analysis (kick/bass/energy/beat/meters) above stays identical.
     const vm = currentMode();
-    if (SK_MODES[vm]) {
+    if (SPACE_MODES[vm]) {
+      energyLive = energy > 0.025;
+      SPACE_MODES[vm](w, h, now, kick, bass, energy, sens);
+    } else if (SK_MODES[vm]) {
       energyLive = energy > 0.025;
       sampleAndPushWave(kick, bass, energy, sens, now);
       skAnalyze(now, kick, energy, sens);
@@ -4062,7 +4447,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=24", { updateViaCache: "none" }).catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=26", { updateViaCache: "none" }).catch(() => {});
     });
   }
 

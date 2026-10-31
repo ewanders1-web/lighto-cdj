@@ -1,11 +1,11 @@
 /* Lighto offline shell */
-const CACHE = "lighto-v25";
+const CACHE = "lighto-v26";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=25",
-  "./themes.js?v=25",
-  "./app.js?v=25",
+  "./styles.css?v=26",
+  "./themes.js?v=26",
+  "./app.js?v=26",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
