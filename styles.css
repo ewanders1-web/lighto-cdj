@@ -1188,3 +1188,13 @@ html, body {
 }
 .mode-item.active { border-color: var(--cyan); color: #000; background: var(--cyan); box-shadow: 0 0 14px rgba(var(--cyan-rgb), 0.5); }
 .mode-toast { z-index: 41; }
+
+/* v27: Pulsar sub-mode chips */
+.pulsar-subs { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 40;
+  display: flex; gap: 4px; max-width: calc(100% - 16px); overflow-x: auto; scrollbar-width: none;
+  padding: 3px; border-radius: 999px; background: rgba(6,8,12,0.55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.pulsar-subs[hidden] { display: none; }
+.pulsar-subs::-webkit-scrollbar { display: none; }
+.pulsar-subs button { flex: 0 0 auto; min-height: 34px; padding: 0 11px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.14);
+  background: transparent; color: rgba(255,255,255,0.7); font: 700 0.68rem/1 inherit; letter-spacing: 0.08em; text-transform: uppercase; touch-action: manipulation; }
+.pulsar-subs button.on { color: #000; background: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 10px rgba(var(--cyan-rgb),0.5); }

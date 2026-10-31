@@ -279,6 +279,7 @@
     const i = MODES.findIndex((m) => m.id === id);
     if (i >= 0) modeIndex = i;
     syncModeBtn();
+    try { syncPulsarChips(); } catch (_) {}
     if (persist !== false) {
       try {
         localStorage.setItem(MODE_KEY, MODES[modeIndex].id);
@@ -3950,7 +3951,311 @@
     ctx2d.restore();
     if (E.scr > 0.5) skTears(w, h, E.scr * 0.6, 3);
   }
-  const SPACE_MODES = { sonar: drawSonarModeV2, blackhole: drawBlackHoleMode, warp: drawWarpMode, hyperspace: drawHyperspaceMode, pulsar: drawPulsarMode };
+  // ===== v27: Pulsar sub-modes =====
+  const PULSAR_SUBS = [
+    { id: "classic", name: "Classic" }, { id: "twin", name: "Twin" }, { id: "split", name: "Split Beam" },
+    { id: "magnetar", name: "Magnetar" }, { id: "quasar", name: "Quasar" }, { id: "supernova", name: "Supernova" }];
+  const PSUB_KEY = "lighto-pulsar-sub";
+  let pulsarSub = 0;
+  try { const s = localStorage.getItem(PSUB_KEY); const i = PULSAR_SUBS.findIndex((m) => m.id === s); if (i >= 0) pulsarSub = i; } catch (_) {}
+  const PS = { fast: 0, slow: 0, build: 0, drop: 0, orbit: 0, sep: 1, flare: 0, nb: 1, nbT: 0, strobe: 0, cracks: [], cT: 0,
+    arcs: [], loopsSnap: 0, disc: [], tension: 0, nova: 0, novaT: 0, lastNova: 0, shell: [], reform: 1 };
+  // shared: energy trend (build-up) + drop detection — only from real detector events
+  function psTrend(E, now) {
+    PS.fast += (E.energy - PS.fast) * 0.08; PS.slow += (E.energy - PS.slow) * 0.008;
+    const rising = E.live ? Math.max(0, Math.min(1, (PS.fast - PS.slow) * 8)) : 0;
+    PS.build += (rising - PS.build) * 0.03;
+    PS.drop *= 0.93;
+    if (E.boom && (PS.build > 0.25 || E.down || E.kf > 0.7)) PS.drop = 1;
+    else if (E.kickEv && E.down) PS.drop = Math.max(PS.drop, 0.7);
+  }
+  function psCtx(E) { const dir = E.scr > 0.4 ? SK.dir : 1; return dir; }
+  function psSpin(E, mult) {
+    const dir = psCtx(E), dt = SK.dt / 16.7;
+    SPC.pAng += dir * (TAU / 2) * (SPC.spin * (E.bpm / 60000) * SK.dt * 0.5 + 0.0015 * dt) * (E.scr > 0.6 ? 2.5 : 1) * (mult || 1);
+    return SPC.pAng + (E.scr > 0.5 ? (Math.random() - 0.5) * 0.3 : 0);
+  }
+  function psBeam(cx, cy, a, wd, core, BL, bc, alpha, squash) {
+    const g = ctx2d.createRadialGradient(cx, cy, core, cx, cy, BL * 0.6);
+    g.addColorStop(0, spCol(spMix(bc, SP_WHITE, 0.6), Math.min(1, alpha))); g.addColorStop(0.35, spCol(bc, alpha * 0.35)); g.addColorStop(1, spCol(bc, 0));
+    ctx2d.fillStyle = g; ctx2d.beginPath(); ctx2d.moveTo(cx, cy);
+    const sq = squash == null ? 0.86 : squash;
+    ctx2d.lineTo(cx + Math.cos(a - wd) * BL, cy + Math.sin(a - wd) * BL * sq);
+    ctx2d.lineTo(cx + Math.cos(a + wd) * BL, cy + Math.sin(a + wd) * BL * sq); ctx2d.closePath(); ctx2d.fill();
+  }
+  function psStar(cx, cy, core, E, tint, extra) {
+    spGlow(cx, cy, core * (4 + E.kf * 4 + (extra || 0) * 6), spMix(tint || CYAN, SP_WHITE, 0.5), Math.min(1, 0.35 + E.kf * 0.5 + (extra || 0) * 0.5));
+    ctx2d.save(); ctx2d.globalCompositeOperation = "source-over";
+    ctx2d.beginPath(); ctx2d.arc(cx, cy, core, 0, TAU); ctx2d.fillStyle = `rgba(255,255,255,${Math.min(1, 0.85 + E.kf * 0.15)})`; ctx2d.fill(); ctx2d.restore();
+  }
+  // particles: rings + sparks (capped by screen size)
+  function psParticles(E, now, cx, cy, core, minDim, w, h, ringCol) {
+    const P = SPC.ps, cap = spCap(w, h, 3500, 60, 260), dt = SK.dt / 16.7, S = E.I;
+    if (E.kickEv) P.push({ k: "ring", t0: now, s: E.boom ? 1 : 0.7, x: cx, y: cy });
+    const nsp = E.live ? Math.round(E.hi * 6 * S + (E.hat ? 6 : 0) + E.scr * 8) : 0;
+    for (let i = 0; i < nsp && P.length < cap; i++) { const a = Math.random() * TAU, v = (2 + Math.random() * 6) * dpr; P.push({ k: "sp", x: cx + Math.cos(a) * core, y: cy + Math.sin(a) * core, vx: Math.cos(a) * v, vy: Math.sin(a) * v, l: 1, c: E.scr > 0.4 ? ORANGE : SP_WHITE }); }
+    psRun(P, now, core, minDim, dt, ringCol);
+  }
+  function psRun(P, now, core, minDim, dt, ringCol) {
+    for (let i = P.length - 1; i >= 0; i--) {
+      const q = P[i];
+      if (q.k === "knot") continue;
+      if (q.k === "ring") {
+        const age = (now - q.t0) / 1400; if (age >= 1) { P.splice(i, 1); continue; }
+        ctx2d.beginPath(); ctx2d.arc(q.x, q.y, core + age * minDim * 0.6, 0, TAU);
+        ctx2d.strokeStyle = spCol(spMix(ringCol || BOOM || CYAN, SP_WHITE, 0.3), (1 - age) * 0.6 * q.s); ctx2d.lineWidth = (1 - age) * 8 * dpr * q.s; ctx2d.stroke();
+      } else {
+        q.x += q.vx * dt; q.y += q.vy * dt; q.l -= 0.03 * dt; if (q.l <= 0) { P.splice(i, 1); continue; }
+        ctx2d.strokeStyle = spCol(q.c, q.l); ctx2d.lineWidth = 1.3 * dpr; ctx2d.beginPath(); ctx2d.moveTo(q.x, q.y); ctx2d.lineTo(q.x - q.vx * 2, q.y - q.vy * 2); ctx2d.stroke();
+      }
+    }
+  }
+  function psBg(E, zoom) { spFeedback(els.canvas.width, els.canvas.height, zoom || 1.008, 0.2 + SPC.act * 0.1, 0); ctx2d.fillStyle = "rgba(0,0,6,0.3)"; ctx2d.fillRect(0, 0, els.canvas.width, els.canvas.height); }
+  const MAGENTA_C = [255, 60, 200], BLUE_C = [70, 130, 255];
+
+  // --- Twin: binary pulsar ---
+  function drawPulsarTwin(w, h, now, kick, bass, energy, sens) {
+    const E = spAnalyze(now, kick, bass, energy, sens); psTrend(E, now);
+    const cx = w / 2, cy = h / 2, minDim = Math.min(w, h), S = E.I, dt = SK.dt / 16.7;
+    psBg(E);
+    const ang = psSpin(E, 1.2);
+    // orbit: one revolution per 2 bars (8 beats), BPM-locked; idles slowly
+    PS.orbit += (TAU / 8) * (E.bpm / 60000) * SK.dt * (0.15 + SPC.act * 0.85) * (E.scr > 0.6 ? -SK.dir * 0 + 1 : 1);
+    const sepT = 0.24 - PS.build * 0.12 + PS.drop * 0.06;
+    PS.sep += (sepT - PS.sep) * 0.05; if (PS.sep > 0.4) PS.sep = sepT;
+    PS.flare = Math.max(PS.flare * 0.94, PS.drop > 0.95 ? 1 : 0);
+    const r = minDim * PS.sep * (0.9 + userScale * 0.1);
+    const stars = [0, Math.PI].map((o) => [cx + Math.cos(PS.orbit + o) * r, cy + Math.sin(PS.orbit + o) * r * 0.55]);
+    const core = minDim * 0.032 * (1 + E.kf * 0.5 * S + E.bass * 0.15 + PS.flare * 0.8);
+    ctx2d.save(); ctx2d.globalCompositeOperation = "lighter";
+    // orbit trail
+    ctx2d.beginPath(); ctx2d.ellipse(cx, cy, r, r * 0.55, 0, 0, TAU); ctx2d.strokeStyle = spCol(CYAN, 0.06 + SPC.act * 0.08); ctx2d.lineWidth = dpr; ctx2d.stroke();
+    // gravitational ripples from barycentre on kicks
+    const P = SPC.ps;
+    if (E.kickEv) P.push({ k: "ring", t0: now, s: E.boom ? 1 : 0.6, x: cx, y: cy });
+    const BL = Math.hypot(w, h), wd = 0.04 + E.mid * 0.1 * S + E.kf * 0.04 + PS.flare * 0.08;
+    const pals = [[CYAN, BLUE_C], [ORANGE, MAGENTA_C]];
+    stars.forEach(([x, y], i) => {
+      const a = ang * (i ? -1.15 : 1) + i * 1.1;
+      psBeam(x, y, a, wd, core, BL, pals[i][0], 0.35 + E.kf * 0.45 + PS.flare * 0.4 + SPC.act * 0.1);
+      psBeam(x, y, a + Math.PI, wd, core, BL, pals[i][1], 0.3 + E.kf * 0.4 + PS.flare * 0.4);
+    });
+    // tidal bridge between stars
+    ctx2d.beginPath(); ctx2d.moveTo(stars[0][0], stars[0][1]);
+    ctx2d.quadraticCurveTo(cx + Math.sin(now * 0.002) * r * 0.3 * E.mid, cy, stars[1][0], stars[1][1]);
+    ctx2d.strokeStyle = spCol(spMix(CYAN, ORANGE, 0.5), 0.1 + E.mid * 0.4 + PS.build * 0.3); ctx2d.lineWidth = (1 + E.bass * 3) * dpr; ctx2d.stroke();
+    const cap = spCap(w, h, 3500, 60, 260);
+    const nsp = E.live ? Math.round(E.hi * 4 * S + (E.hat ? 4 : 0) + E.scr * 6 + PS.flare * 10) : 0;
+    for (let i = 0; i < nsp && P.length < cap; i++) { const s = stars[i & 1], a = Math.random() * TAU, v = (2 + Math.random() * 6) * dpr; P.push({ k: "sp", x: s[0], y: s[1], vx: Math.cos(a) * v, vy: Math.sin(a) * v, l: 1, c: i & 1 ? ORANGE : CYAN }); }
+    psRun(P, now, core, minDim, dt, spMix(CYAN, ORANGE, 0.5));
+    stars.forEach(([x, y], i) => psStar(x, y, core, E, i ? ORANGE : CYAN, PS.flare));
+    ctx2d.restore();
+    if (E.scr > 0.5) skTears(w, h, E.scr * 0.6, 3);
+  }
+
+  // --- Split Beam: disco lighthouse ---
+  function drawPulsarSplit(w, h, now, kick, bass, energy, sens) {
+    const E = spAnalyze(now, kick, bass, energy, sens); psTrend(E, now);
+    const cx = w / 2, cy = h / 2, minDim = Math.min(w, h), S = E.I;
+    psBg(E);
+    const ang = psSpin(E, 1);
+    // target split count: drops/high energy fan out, quiet collapses back
+    let tgt = 1;
+    if (E.live) { if (PS.drop > 0.6 || PS.fast > 0.45) tgt = 4; else if (PS.fast > 0.28 || PS.drop > 0.3) tgt = 2; }
+    if (PS.drop > 0.95) tgt = 4;
+    if (tgt > PS.nb) { PS.nb = tgt; PS.nbT = now; } else if (tgt < PS.nb && now - PS.nbT > 2500) { PS.nb = Math.max(tgt, PS.nb / 2); PS.nbT = now; }
+    PS.fan = (PS.fan || 1) + (PS.nb - (PS.fan || 1)) * 0.08;
+    const pairs = PS.fan; // 1..4 pairs → 2..8 beams
+    const core = minDim * 0.045 * (1 + E.kf * 0.5 * S + E.bass * 0.15);
+    const strobe = E.scr > 0.35 ? ((now / 45) | 0) % 2 : 1;
+    ctx2d.save(); ctx2d.globalCompositeOperation = "lighter";
+    const BL = Math.hypot(w, h), n = Math.ceil(pairs - 0.01), spread = 0.55 * Math.min(1, pairs / 2);
+    if (strobe) for (let j = 0; j < n; j++) {
+      const vis = Math.min(1, pairs - j + 0.0001);
+      const off = n > 1 ? (j / (n - 1) - 0.5) * spread * 2 * Math.min(1, (pairs - 1) / 1) : 0;
+      const wd = (0.045 + E.mid * 0.08 * S + E.kf * 0.04) / Math.sqrt(n);
+      for (const s of [0, Math.PI]) {
+        const bc = bandColorAt((j / Math.max(1, n)) * 0.8 + (s ? 0.1 : 0), 0.8);
+        psBeam(cx, cy, ang + s + off, wd, core, BL, spMix(s ? ORANGE : CYAN, bc, n > 1 ? 0.5 : 0), (0.35 + E.kf * 0.5 + SPC.act * 0.1) * vis);
+      }
+    }
+    // mirror-ball dots on the fan
+    const dots = Math.round(n * 6);
+    for (let i = 0; i < dots && E.live; i++) {
+      const a = ang + (i / dots) * TAU * 3 + now * 0.0004, rr = minDim * (0.2 + ((i * 37) % 50) / 100);
+      ctx2d.fillStyle = spCol(i & 1 ? CYAN : ORANGE, 0.15 + E.hi * 0.6); ctx2d.fillRect(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr * 0.86, 2 * dpr, 2 * dpr);
+    }
+    psParticles(E, now, cx, cy, core, minDim, w, h);
+    psStar(cx, cy, core, E, CYAN, PS.drop * 0.3);
+    ctx2d.restore();
+    if (E.scr > 0.5) skTears(w, h, E.scr * 0.5, 2);
+  }
+
+  // --- Magnetar: magnetic storm ---
+  function drawPulsarMagnetar(w, h, now, kick, bass, energy, sens) {
+    const E = spAnalyze(now, kick, bass, energy, sens); psTrend(E, now);
+    const cx = w / 2, cy = h / 2, minDim = Math.min(w, h), S = E.I, dt = SK.dt / 16.7;
+    psBg(E, 1.004);
+    const ang = psSpin(E, 0.6);
+    const core = minDim * 0.06 * (1 + E.kf * 0.4 * S + E.bass * 0.12);
+    if (E.kickEv) PS.loopsSnap = 1; PS.loopsSnap *= 0.9;
+    ctx2d.save(); ctx2d.globalCompositeOperation = "lighter";
+    // dipole field loops: r = L sin^2(theta)
+    const nL = 7, pts = 40, loops = [];
+    for (let k = 0; k < nL; k++) {
+      const L = minDim * (0.12 + k * 0.05) * (1 + E.mid * 0.2 * S), loop = [];
+      const snap = PS.loopsSnap * (k % 2 ? 1 : -1) * 0.35;
+      for (const side of [1, -1]) for (let i = 0; i <= pts; i++) {
+        const th = 0.15 + (i / pts) * (Math.PI - 0.3);
+        let rr = L * Math.sin(th) ** 2;
+        // snap: loops break open at apex then reconnect
+        if (Math.abs(th - Math.PI / 2) < 0.4 * PS.loopsSnap) rr *= 1 + snap;
+        const lx = side * rr * Math.sin(th), ly = rr * Math.cos(th);
+        const ca = Math.cos(ang * 0.3), sa = Math.sin(ang * 0.3);
+        loop.push([cx + lx * ca - ly * sa, cy + lx * sa + ly * ca]);
+      }
+      loops.push(loop);
+      const c = spMix(k % 2 ? CYAN : MAGENTA_C, SP_WHITE, PS.loopsSnap * 0.4);
+      ctx2d.strokeStyle = spCol(c, 0.12 + E.mid * 0.3 + PS.loopsSnap * 0.35 + SPC.act * 0.05);
+      ctx2d.lineWidth = (1.2 + PS.loopsSnap * 3) * dpr;
+      ctx2d.beginPath(); loop.forEach((p, i) => (i % (pts + 1) === 0 ? ctx2d.moveTo(p[0], p[1]) : ctx2d.lineTo(p[0], p[1]))); ctx2d.stroke();
+    }
+    // lightning along field lines on highs
+    if (E.live && (E.hat || E.hi > 0.12) && PS.arcs.length < 6) {
+      const lp = loops[(Math.random() * nL) | 0], st = (Math.random() * (lp.length - 12)) | 0;
+      PS.arcs.push({ lp, st, len: 8 + ((Math.random() * 10) | 0), l: 1 });
+    }
+    for (let i = PS.arcs.length - 1; i >= 0; i--) {
+      const a = PS.arcs[i]; a.l -= 0.12 * dt; if (a.l <= 0) { PS.arcs.splice(i, 1); continue; }
+      ctx2d.beginPath();
+      for (let j = 0; j < a.len && a.st + j < a.lp.length; j++) { const p = a.lp[a.st + j], jt = (Math.random() - 0.5) * 8 * dpr; j ? ctx2d.lineTo(p[0] + jt, p[1] + jt) : ctx2d.moveTo(p[0], p[1]); }
+      ctx2d.strokeStyle = spCol(spMix(CYAN, SP_WHITE, 0.7), a.l); ctx2d.lineWidth = 2 * dpr; ctx2d.stroke();
+    }
+    // narrow beams
+    const BL = Math.hypot(w, h);
+    psBeam(cx, cy, ang, 0.03 + E.mid * 0.05, core, BL, CYAN, 0.3 + E.kf * 0.4);
+    psBeam(cx, cy, ang + Math.PI, 0.03 + E.mid * 0.05, core, BL, MAGENTA_C, 0.3 + E.kf * 0.4);
+    psParticles(E, now, cx, cy, core, minDim, w, h, MAGENTA_C);
+    psStar(cx, cy, core, E, MAGENTA_C, PS.drop * 0.4);
+    // starquake cracks on drops
+    if (PS.drop > 0.95 && now - PS.cT > 400) {
+      PS.cT = now; PS.cracks.length = 0;
+      for (let c = 0; c < 7; c++) { let a = Math.random() * TAU, rr = 0; const seg = []; for (let s = 0; s < 6; s++) { a += (Math.random() - 0.5) * 0.9; rr += core * 0.25; seg.push([Math.cos(a) * rr, Math.sin(a) * rr]); } PS.cracks.push(seg); }
+      PS.crackL = 1;
+    }
+    PS.crackL = (PS.crackL || 0) * 0.96;
+    if (PS.crackL > 0.03) {
+      ctx2d.globalCompositeOperation = "source-over";
+      ctx2d.strokeStyle = spCol(spMix(ORANGE, MAGENTA_C, 0.3), PS.crackL); ctx2d.lineWidth = 1.6 * dpr;
+      for (const seg of PS.cracks) { ctx2d.beginPath(); ctx2d.moveTo(cx, cy); for (const [x, y] of seg) ctx2d.lineTo(cx + Math.min(core, Math.hypot(x, y)) * Math.cos(Math.atan2(y, x)), cy + Math.min(core, Math.hypot(x, y)) * Math.sin(Math.atan2(y, x))); ctx2d.stroke(); }
+    }
+    ctx2d.restore();
+    if (E.scr > 0.5) skTears(w, h, E.scr * 0.6, 3);
+  }
+
+  // --- Quasar: accretion disc + relativistic jets ---
+  function drawPulsarQuasar(w, h, now, kick, bass, energy, sens) {
+    const E = spAnalyze(now, kick, bass, energy, sens); psTrend(E, now);
+    const cx = w / 2, cy = h / 2, minDim = Math.min(w, h), S = E.I, dt = SK.dt / 16.7;
+    psBg(E, 1.006);
+    const ang = psSpin(E, 1.4);
+    const core = minDim * 0.035 * (1 + E.kf * 0.5 * S + E.bass * 0.15);
+    const D = PS.disc, cap = spCap(w, h, 4000, 80, 320);
+    while (D.length < cap) D.push({ r: 0.08 + Math.random() * 0.32, a: Math.random() * TAU, s: 0.5 + Math.random() });
+    if (D.length > cap) D.length = cap;
+    ctx2d.save(); ctx2d.globalCompositeOperation = "lighter";
+    // jets (behind disc): length from energy, width/brightness from bass
+    const jl = Math.max(h, w) * (0.25 + SPC.act * 0.25 + E.energy * 0.6 * S + PS.drop * 0.2);
+    for (const sgn of [-1, 1]) {
+      const jw = minDim * (0.012 + E.bass * 0.03 + E.kf * 0.02);
+      const g = ctx2d.createLinearGradient(cx, cy, cx, cy + sgn * jl);
+      const jc = sgn < 0 ? CYAN : ORANGE;
+      g.addColorStop(0, spCol(spMix(jc, SP_WHITE, 0.6), 0.6 + E.kf * 0.4)); g.addColorStop(0.5, spCol(jc, 0.25 + E.bass * 0.3)); g.addColorStop(1, spCol(jc, 0));
+      ctx2d.fillStyle = g; ctx2d.beginPath();
+      const wob = Math.sin(now * 0.004) * jw * 0.5;
+      ctx2d.moveTo(cx - jw * 0.4, cy); ctx2d.lineTo(cx - jw * 1.6 + wob, cy + sgn * jl); ctx2d.lineTo(cx + jw * 1.6 + wob, cy + sgn * jl); ctx2d.lineTo(cx + jw * 0.4, cy); ctx2d.fill();
+      // knots travelling up the jet on beats
+      if (E.beat || E.kickEv) SPC.ps.push({ k: "knot", t0: now, sgn, jc });
+    }
+    // disc
+    const tilt = 0.28, spinR = (E.bpm / 60000) * SK.dt * (0.2 + SPC.act) * 1.2;
+    for (const p of D) {
+      p.a += spinR * p.s / (p.r * 6);
+      const rr = p.r * minDim * (1 + E.mid * 0.15 * S), x = cx + Math.cos(p.a) * rr, y = cy + Math.sin(p.a) * rr * tilt;
+      const heat = 1 - (p.r - 0.08) / 0.32, c = spMix(ORANGE, spMix(CYAN, SP_WHITE, 0.4), heat);
+      ctx2d.fillStyle = spCol(c, 0.25 + heat * 0.4 + E.bass * 0.3); const sz = (1 + heat * 1.5) * dpr; ctx2d.fillRect(x, y, sz * 2, sz);
+    }
+    // pulsar beams inside disc
+    const BL = minDim * 0.5;
+    psBeam(cx, cy, ang, 0.05 + E.mid * 0.08, core, BL, CYAN, 0.25 + E.kf * 0.4, 0.5);
+    psBeam(cx, cy, ang + Math.PI, 0.05 + E.mid * 0.08, core, BL, ORANGE, 0.25 + E.kf * 0.4, 0.5);
+    const P = SPC.ps;
+    for (let i = P.length - 1; i >= 0; i--) {
+      const q = P[i]; if (q.k !== "knot") continue;
+      const age = (now - q.t0) / 900; if (age >= 1) { P.splice(i, 1); continue; }
+      spGlow(cx, cy + q.sgn * age * jl, minDim * 0.03 * (1 - age * 0.5), q.jc, (1 - age) * 0.7);
+    }
+    psParticles(E, now, cx, cy, core, minDim, w, h);
+    psStar(cx, cy, core, E, CYAN, PS.drop * 0.3);
+    ctx2d.restore();
+    if (E.scr > 0.5) skTears(w, h, E.scr * 0.6, 3);
+  }
+
+  // --- Supernova: tension → explosion on real drop/downbeat → re-form ---
+  function drawPulsarSupernova(w, h, now, kick, bass, energy, sens) {
+    const E = spAnalyze(now, kick, bass, energy, sens); psTrend(E, now);
+    const cx = w / 2, cy = h / 2, minDim = Math.min(w, h), S = E.I, dt = SK.dt / 16.7;
+    psBg(E, 1.01);
+    const ang = psSpin(E, 1);
+    PS.reform = Math.min(1, PS.reform + 0.006 * dt);
+    // tension accumulates only while live and building
+    PS.tension = Math.max(0, Math.min(1, PS.tension + (E.live ? (0.002 + PS.build * 0.01 + E.energy * 0.003) * PS.reform : -0.01) * dt));
+    const ready = PS.tension > 0.55 && PS.reform >= 1 && now - PS.lastNova > 4000;
+    // explode only on a real detected big kick / downbeat — never on a timer
+    if (ready && E.live && (E.boom || (E.kickEv && E.down))) {
+      PS.lastNova = now; PS.nova = 1; PS.reform = 0;
+      const cap = spCap(w, h, 3000, 80, 340), T = PS.tension;
+      PS.shell.length = 0;
+      for (let i = 0; i < cap; i++) { const a = (i / cap) * TAU + Math.random() * 0.05, v = (3 + Math.random() * 5 + T * 6) * dpr; PS.shell.push({ x: cx, y: cy, vx: Math.cos(a) * v, vy: Math.sin(a) * v, l: 1, c: bandColorAt(Math.random(), 1) }); }
+      SPC.ps.push({ k: "ring", t0: now, s: 1.4, x: cx, y: cy });
+      PS.tension = 0;
+    }
+    PS.nova *= 0.96;
+    const T = PS.tension, tremble = T * T * minDim * 0.006 * (E.live ? 1 : 0);
+    const sx = cx + (Math.random() - 0.5) * tremble, sy = cy + (Math.random() - 0.5) * tremble;
+    const core = minDim * 0.04 * (0.4 + PS.reform * 0.6) * (1 + E.kf * 0.4 * S + T * 0.8);
+    ctx2d.save(); ctx2d.globalCompositeOperation = "lighter";
+    // trembling shell
+    if (PS.reform > 0.3) {
+      ctx2d.beginPath();
+      const rr = core * (2.2 + T), n = 48;
+      for (let i = 0; i <= n; i++) { const a = (i / n) * TAU, j = 1 + (Math.random() - 0.5) * T * 0.25 + Math.sin(a * 6 + now * 0.01) * E.mid * 0.1; const x = sx + Math.cos(a) * rr * j, y = sy + Math.sin(a) * rr * j; i ? ctx2d.lineTo(x, y) : ctx2d.moveTo(x, y); }
+      ctx2d.strokeStyle = spCol(spMix(ORANGE, SP_WHITE, T), 0.15 + T * 0.6); ctx2d.lineWidth = (1 + T * 2) * dpr; ctx2d.stroke();
+    }
+    // explosion shell debris
+    for (let i = PS.shell.length - 1; i >= 0; i--) {
+      const q = PS.shell[i]; q.x += q.vx * dt; q.y += q.vy * dt; q.vx *= 0.99; q.vy *= 0.99; q.l -= 0.006 * dt;
+      if (q.l <= 0) { PS.shell.splice(i, 1); continue; }
+      ctx2d.strokeStyle = spCol(q.c, q.l * 0.9); ctx2d.lineWidth = 2 * dpr; ctx2d.beginPath(); ctx2d.moveTo(q.x, q.y); ctx2d.lineTo(q.x - q.vx * 3, q.y - q.vy * 3); ctx2d.stroke();
+    }
+    if (PS.nova > 0.05) spGlow(cx, cy, minDim * (0.2 + (1 - PS.nova) * 0.6), spMix(ORANGE, SP_WHITE, PS.nova), PS.nova * 0.8);
+    const BL = Math.hypot(w, h) * PS.reform;
+    if (PS.reform > 0.2) {
+      psBeam(sx, sy, ang, 0.04 + E.mid * 0.08 * S + T * 0.04, core, BL, CYAN, (0.3 + E.kf * 0.4 + T * 0.3) * PS.reform);
+      psBeam(sx, sy, ang + Math.PI, 0.04 + E.mid * 0.08 * S + T * 0.04, core, BL, ORANGE, (0.3 + E.kf * 0.4 + T * 0.3) * PS.reform);
+    }
+    psParticles(E, now, sx, sy, core, minDim, w, h);
+    psStar(sx, sy, core, E, spMix(CYAN, ORANGE, T), T);
+    ctx2d.restore();
+    if (E.scr > 0.5) skTears(w, h, E.scr * 0.6, 3);
+  }
+  const PULSAR_FNS = [drawPulsarMode, drawPulsarTwin, drawPulsarSplit, drawPulsarMagnetar, drawPulsarQuasar, drawPulsarSupernova];
+  let psLastSub = -1;
+  function drawPulsarDispatch(w, h, now, kick, bass, energy, sens) {
+    if (psLastSub !== pulsarSub) { psLastSub = pulsarSub; SPC.ps.length = 0; PS.shell.length = 0; PS.arcs.length = 0; PS.nb = 1; PS.fan = 1; PS.tension = 0; PS.reform = 1; }
+    PULSAR_FNS[pulsarSub](w, h, now, kick, bass, energy, sens);
+  }
+  const SPACE_MODES = { sonar: drawSonarModeV2, blackhole: drawBlackHoleMode, warp: drawWarpMode, hyperspace: drawHyperspaceMode, pulsar: drawPulsarDispatch };
 
   const SK_MODES = { scratchglitch: drawScratchGlitchMode, scratchplatter: drawScratchPlatterMode, vhs: drawVhsMode,
     split: drawSplitMode, lighttrails: drawLightTrailsMode, skratchbastid: drawSkratchBastidMode };
@@ -4396,6 +4701,35 @@
     if (modeMenuOpen && !e.target.closest("#modeMenu") && !e.target.closest("#modesBtn")) setModeMenu(false);
   }, true);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") setModeMenu(false); });
+  // v27: Pulsar sub-mode chips
+  const psChips = document.getElementById("pulsarSubs");
+  function syncPulsarChips() {
+    if (!psChips) return;
+    const on = MODES[modeIndex] && MODES[modeIndex].id === "pulsar";
+    psChips.hidden = !on;
+    psChips.querySelectorAll("button").forEach((b, i) => b.classList.toggle("on", i === pulsarSub));
+  }
+  function setPulsarSub(i) {
+    pulsarSub = (i + PULSAR_SUBS.length) % PULSAR_SUBS.length;
+    try { localStorage.setItem(PSUB_KEY, PULSAR_SUBS[pulsarSub].id); } catch (_) {}
+    syncPulsarChips();
+    if (els.modeToast) {
+      els.modeToast.textContent = "Pulsar · " + PULSAR_SUBS[pulsarSub].name;
+      els.modeToast.classList.add("show"); window.clearTimeout(modeToastTimer);
+      modeToastTimer = window.setTimeout(() => els.modeToast.classList.remove("show"), 1200);
+    }
+  }
+  if (psChips) {
+    PULSAR_SUBS.forEach((m, i) => {
+      const b = document.createElement("button"); b.type = "button"; b.textContent = m.name; b.dataset.sub = m.id;
+      b.addEventListener("click", (e) => { e.stopPropagation(); setPulsarSub(i); });
+      b.addEventListener("touchend", (e) => e.stopPropagation(), { passive: true });
+      psChips.appendChild(b);
+    });
+    syncPulsarChips();
+  }
+  window.lightoPulsar = { set: setPulsarSub, subs: PULSAR_SUBS, get: () => pulsarSub };
+  let psTapT = 0;
   // Swipe left/right on the canvas: next/prev mode
   let swX = 0, swY = 0, swT = 0, swUsed = false;
   els.display.addEventListener("touchstart", (e) => {
@@ -4421,6 +4755,12 @@
     if (!running || swUsed) return;
     if (e.target.closest("#modeMenu")) return;
     if (e.target.closest(".tap-btn") || e.target.closest(".overlay") || e.target.closest(".denied")) return;
+    if (e.target.closest("#pulsarSubs")) return;
+    if (currentMode() === "pulsar" && e.target === els.canvas) {
+      const t = Date.now();
+      if (t - psTapT < 320) { psTapT = 0; setPulsarSub(pulsarSub + 1); return; }
+      psTapT = t;
+    }
     if (partyMode) revealChrome();
     else schedulePartyHide();
   });
@@ -4447,7 +4787,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=26", { updateViaCache: "none" }).catch(() => {});
+      navigator.serviceWorker.register("./sw.js?v=27", { updateViaCache: "none" }).catch(() => {});
     });
   }
 
